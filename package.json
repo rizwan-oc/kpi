@@ -82,6 +82,7 @@
     "ajv": ">=6.12.3",
     "acorn": ">=6.4.1",
     "ansi-html": ">=0.0.8",
+    "ansi-regex": "=4.1.1",
     "browserslist": ">=4.16.5",
     "chrome-launcher": ">=0.13.2",
     "deep-extend": ">=0.5.1",
