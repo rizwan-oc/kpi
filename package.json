@@ -40,7 +40,7 @@
     "mocha": "^5.2.0",
     "mocha-chrome": "^1.1.0",
     "moment": ">=2.29.4",
-    "node-sass": "4.13.1",
+    "node-sass": ">=8.0.0",
     "object-assign": "^4.1.1",
     "postcss": ">=7.0.36",
     "postcss-loader": "^3.0.0",
@@ -107,6 +107,8 @@
     "minimatch": ">=3.0.5",
     "node-forge": ">=1.3.0",
     "node-fetch": ">=2.6.7",
+    "node-gyp": ">=8.0.0",
+    "node-sass": ">=8.0.0",
     "pathval": ">=1.1.1",
     "postcss": ">=7.0.36",
     "path-parse": ">=1.0.7",
@@ -126,7 +128,12 @@
     "y18n": ">=4.0.1",
     "yargs-parser": ">=13.1.2"
   },
+  "exclusions": {
+    "@npmcli/fs": "any",
+    "@npmcli/move": "any"
+  },
   "scripts": {
+    "preinstall": "npx force-resolutions",
     "build": "webpack --config webpack/prod.config.js --progress --colors",
     "build-production": "npm run build && echo 'WARNING: npm run build-production DEPRECATED! PLEASE USE npm run build INSTEAD'",
     "watch": "webpack-dev-server --config webpack/dev.server.js",

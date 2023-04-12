@@ -70,7 +70,3 @@ All project icons are kept in `jsapp/svg-icons/`. Adding new icon requires addin
 Supported Browsers
 ------------------
 See [browsers list config](./.browserslistrc)
-
-Apply Resolutions
------------------
-In order to apply resolutions, run command `npx npm-force-resolutions && npm install`
