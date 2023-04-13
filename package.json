@@ -79,15 +79,8 @@
     "zxcvbn": "^4.4.2"
   },
   "overrides": {
-    "mocha-chrome": {
-      "chrome-launcher": ">=0.13.2"
-    },
-    "meow": {
-      "yargs-parser": ">=13.1.2"
-    },
-    "yargs": {
-      "yargs-parser": ">=13.1.2"
-    }
+    "chrome-launcher": ">=0.13.2",
+    "yargs-parser": ">=13.1.2"
   },
   "scripts": {
     "build": "webpack --config webpack/prod.config.js --progress --colors",
