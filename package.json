@@ -38,7 +38,7 @@
     "lodash.clonedeep": "^4.5.0",
     "lodash.merge": "^4.6.1",
     "mocha": "^5.2.0",
-    "mocha-chrome": "^1.1.0",
+    "mocha-chrome": "^2.2.0",
     "moment": ">=2.29.4",
     "node-sass": "4.13.1",
     "object-assign": "^4.1.1",
@@ -75,8 +75,13 @@
     "webpack": "^4.20.2",
     "webpack-bundle-tracker": "0.4.0-beta",
     "webpack-cli": "^3.1.1",
-    "webpack-dev-server": "^4.0.0",
+    "webpack-dev-server": "^4.13.2",
     "zxcvbn": "^4.4.2"
+  },
+  "overrides": {
+    "mocha-chrome": {
+      "chrome-launcher": ">=0.13.2"
+    }
   },
   "scripts": {
     "build": "webpack --config webpack/prod.config.js --progress --colors",

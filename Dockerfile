@@ -22,7 +22,7 @@ COPY ./dependencies/apt_requirements.txt "${KPI_SRC_DIR}/dependencies/"
 RUN if ! diff "${KPI_SRC_DIR}/dependencies/apt_requirements.txt" /srv/tmp/base__apt_requirements.txt; then \
         apt-get update -qq && \
         apt-get install -qqy $(cat "${KPI_SRC_DIR}/dependencies/apt_requirements.txt") && \
-        apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \ 
+        apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     ; fi
 
 ##########################################
@@ -55,7 +55,15 @@ WORKDIR ${KPI_SRC_DIR}/
 # Only install if the current version of `package.json` differs from the one used in the base image.
 RUN if ! diff "${KPI_SRC_DIR}/package.json" /srv/tmp/base_package.json; then \
         # Try error-prone `npm install` step twice.
-        npm install --quiet || npm install --quiet \
+        curl -fsSL https://deb.nodesource.com/setup_14.x | bash - &&  \
+        apt-get install -y nodejs &&  \
+        npm i -g npm@8.3.0 &&  \
+        npm i --quite --legacy-peer-deps  \
+        ||  \
+        curl -fsSL https://deb.nodesource.com/setup_14.x | bash - &&  \
+        apt-get install -y nodejs &&  \
+        npm i -g npm@8.3.0 &&  \
+        npm i --quite --legacy-peer-deps \
     ; fi
 
 
