@@ -81,6 +81,12 @@
   "overrides": {
     "mocha-chrome": {
       "chrome-launcher": ">=0.13.2"
+    },
+    "meow": {
+      "yargs-parser": ">=13.1.2"
+    },
+    "yargs": {
+      "yargs-parser": ">=13.1.2"
     }
   },
   "scripts": {
