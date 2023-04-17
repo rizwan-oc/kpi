@@ -40,7 +40,9 @@
     "mocha": "^5.2.0",
     "mocha-chrome": "^2.2.0",
     "moment": ">=2.29.4",
-    "node-sass": "npm:sass@^1.62.0",
+    "node-sass": "4.13.1",
+    "npm-dependency-exclusion": "^1.0.2",
+    "npx": "^10.2.2",
     "object-assign": "^4.1.1",
     "postcss": ">=7.0.36",
     "postcss-loader": "^3.0.0",
@@ -111,9 +113,5 @@
   "author": "alex.dorey@kobotoolbox.org, esmail.fadae@kobotoolbox.org, john.milner@kobotoolbox.org",
   "license": "AGPL-3.0",
   "bugs": "https://github.com/kobotoolbox/kpi/issues",
-  "homepage": "https://github.com/kobotoolbox/kpi",
-  "dependencies": {
-    "npm-dependency-exclusion": "^1.0.2",
-    "npx": "^10.2.2"
-  }
+  "homepage": "https://github.com/kobotoolbox/kpi"
 }
