@@ -94,8 +94,8 @@
     "yargs-parser": ">=13.1.2"
   },
   "exclusions": {
-    "node_modules/request": "any",
-    "node_modules/xmldom": "any"
+    "request": "any",
+    "xmldom": "any"
   },
   "scripts": {
     "build": "webpack --config webpack/prod.config.js --progress --colors",
