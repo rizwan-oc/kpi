@@ -53,17 +53,20 @@ RUN if ! diff "${KPI_SRC_DIR}/dependencies/pip/external_services.txt" /srv/tmp/b
 COPY ./package.json "${KPI_SRC_DIR}/"
 WORKDIR ${KPI_SRC_DIR}/
 # Only install if the current version of `package.json` differs from the one used in the base image.
+# and install node version 14 (and npm version 8.3.0) because it required to apply overrides in package.json
 RUN if ! diff "${KPI_SRC_DIR}/package.json" /srv/tmp/base_package.json; then \
         # Try error-prone `npm install` step twice.
         curl -fsSL https://deb.nodesource.com/setup_14.x | bash - &&  \
         apt-get install -y nodejs &&  \
-        npm i -g npm@8.3.0 &&  \
-        npm i --quite --legacy-peer-deps  \
+        npm i -g npm@8.3.0 \
+    ; fi
+
+# Only install if the current version of `package.json` differs from the one used in the base image.
+RUN if ! diff "${KPI_SRC_DIR}/package.json" /srv/tmp/base_package.json; then \
+        # Try error-prone `npm install` step twice.
+        npm i --quite --legacy-peer-deps && npx npm-dependency-exclusion \
         ||  \
-        curl -fsSL https://deb.nodesource.com/setup_14.x | bash - &&  \
-        apt-get install -y nodejs &&  \
-        npm i -g npm@8.3.0 &&  \
-        npm i --quite --legacy-peer-deps \
+        npm i --quite --legacy-peer-deps && npx npm-dependency-exclusion \
     ; fi
 
 
@@ -116,9 +119,9 @@ RUN python manage.py collectstatic --noinput
 #####################################
 
 RUN git submodule init && \
-    git submodule update --remote && \
-    python manage.py compilemessages
+    git submodule update --remote
 
+#RUN python manage.py compilemessages
 
 #################################################################
 # Persist the log directory, email directory, and Whoosh index. #
