@@ -40,7 +40,6 @@ class ProjectViewViewSet(
     search_default_field_lookups = [
         'name__icontains',
     ]
-    min_search_characters = 2
     ordering_fields = [
         'date_modified',
         'date_deployed',

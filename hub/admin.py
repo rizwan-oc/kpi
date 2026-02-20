@@ -31,7 +31,6 @@ from kpi.deployment_backends.kc_access.shadow_models import (
 from kpi.exceptions import (
     QueryParserBadSyntax,
     QueryParserNotSupportedFieldLookup,
-    SearchQueryTooShortException,
 )
 from kpi.filters import SearchFilter
 from .models import (
@@ -236,7 +235,6 @@ class ExtendedUserAdmin(UserAdmin):
         except (
             QueryParserBadSyntax,
             QueryParserNotSupportedFieldLookup,
-            SearchQueryTooShortException,
         ) as e:
             self.message_user(
                 request,

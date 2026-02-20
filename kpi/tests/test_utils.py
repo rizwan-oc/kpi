@@ -10,7 +10,6 @@ from django.db.models import Q
 from django.test import TestCase
 
 from kpi.exceptions import (
-    SearchQueryTooShortException,
     QueryParserBadSyntax,
     QueryParserNotSupportedFieldLookup,
 )
@@ -242,18 +241,30 @@ class UtilsTestCase(TestCase):
         with pytest.raises(QueryParserNotSupportedFieldLookup):
             parse(query_string, [])
 
-    def test_query_parser_default_search_too_short(self):
-        # if the search query without a field is less than a specified
-        # length of characters (currently 3), then it should
-        # throw `SearchQueryTooShortException()` from `query_parser.py`
+    def test_query_parser_default_search_short_query(self):
+        # Short search queries (even a single character) should work
+        # without raising any exception
         default_field_lookups = [
             'field_a__icontains',
             'field_b'
         ]
         query_string = 'fo'
-        with self.assertRaises(SearchQueryTooShortException) as e:
+        expected_q = (
+            Q(field_a__icontains='fo') |
+            Q(field_b='fo')
+        )
+        assert repr(expected_q) == repr(
             parse(query_string, default_field_lookups)
-        assert 'Your query is too short' in str(e.exception)
+        )
+
+        query_string = 'f'
+        expected_q = (
+            Q(field_a__icontains='f') |
+            Q(field_b='f')
+        )
+        assert repr(expected_q) == repr(
+            parse(query_string, default_field_lookups)
+        )
 
     def test_allow_choice_duplicates(self):
         surv = {

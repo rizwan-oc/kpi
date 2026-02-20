@@ -5,12 +5,10 @@ from collections import defaultdict
 from distutils import util
 from functools import reduce
 
-from django.conf import settings
 from django.db.models import Q
 from django_request_cache import cache_for_request
 
 from kpi.exceptions import (
-    SearchQueryTooShortException,
     QueryParserBadSyntax,
     QueryParserNotSupportedFieldLookup,
 )
@@ -51,9 +49,8 @@ class QueryParseActions:
         'iexact',
     ]
 
-    def __init__(self, default_field_lookups: list, min_search_characters: int):
+    def __init__(self, default_field_lookups: list):
         self.default_field_lookups = default_field_lookups
-        self.min_search_characters = min_search_characters
 
     @staticmethod
     def process_value(field, value):
@@ -141,13 +138,6 @@ class QueryParseActions:
 
         if elements[0].text == '':
             value = _get_value('', elements)
-
-            # As discussed here: https://github.com/kobotoolbox/kpi/pull/2830
-            # there strain on the server for small search queries without a
-            # specified field. The user will receive an empty list in response
-            # until using `self.min_search_characters` or more characters
-            if len(value) < self.min_search_characters:
-                raise SearchQueryTooShortException()
 
             # A list of `Q` objects where every value is the same
             # searched value
@@ -286,7 +276,6 @@ def get_parsed_parameters(parsed_query: Q) -> dict:
 def parse(
     query: str,
     default_field_lookups: list,
-    min_search_characters: int = None,
 ) -> Q:
     """
     Parse a Boolean query string into a Django Q object.
@@ -296,10 +285,7 @@ def parse(
     any object whose `summary` or `name` field contains `term` (case
     insensitive)
     """
-    if not min_search_characters:
-        min_search_characters = settings.MINIMUM_DEFAULT_SEARCH_CHARACTERS
-
     return grammar_parse(
         query,
-        QueryParseActions(default_field_lookups, min_search_characters),
+        QueryParseActions(default_field_lookups),
     )
