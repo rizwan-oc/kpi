@@ -30,7 +30,6 @@ from kpi.constants import (
 from kpi.exceptions import (
     QueryParserBadSyntax,
     QueryParserNotSupportedFieldLookup,
-    SearchQueryTooShortException,
 )
 from kpi.models import Asset, ObjectPermission
 from kpi.models.asset import UserAssetSubscription
@@ -356,7 +355,7 @@ class KpiObjectPermissionsFilter:
             q_obj = parse(
                 q, default_field_lookups=ASSET_SEARCH_DEFAULT_FIELD_LOOKUPS
             )
-        except (ParseError, SearchQueryTooShortException):
+        except ParseError:
             # Let's `SearchFilter` handle errors
             return {}
         else:
@@ -405,20 +404,13 @@ class SearchFilter(filters.BaseFilterBackend):
             q_obj = parse(
                 q,
                 default_field_lookups=view.search_default_field_lookups,
-                min_search_characters=getattr(
-                    view, 'min_search_characters', None
-                ),
             )
         except ParseError:
             return queryset.model.objects.none()
         except (
             QueryParserBadSyntax,
             QueryParserNotSupportedFieldLookup,
-            SearchQueryTooShortException,
         ) as e:
-            # raising an exception if the default search query without a
-            # specified field is less than a set length of characters -
-            # currently 3 (see `settings.MINIMUM_DEFAULT_SEARCH_CHARACTERS`)
             raise e
 
         try:

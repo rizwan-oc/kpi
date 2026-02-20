@@ -1272,7 +1272,7 @@ MFA_SUPPORTED_AUTH_CLASSES = [
     'kpi.authentication.TokenAuthentication',
 ]
 
-MINIMUM_DEFAULT_SEARCH_CHARACTERS = 3
+MINIMUM_DEFAULT_SEARCH_CHARACTERS = 1
 
 # Django 3.2 required settings
 DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
