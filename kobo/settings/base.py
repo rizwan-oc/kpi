@@ -49,21 +49,24 @@ SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', 0)
 USE_X_FORWARDED_HOST = env.bool("USE_X_FORWARDED_HOST", False)
 
 # Domain must not exclude KoBoCAT when sharing sessions
-SESSION_COOKIE_DOMAIN = env.str('SESSION_COOKIE_DOMAIN', None)
-if SESSION_COOKIE_DOMAIN:
-    SESSION_COOKIE_NAME = env.str('SESSION_COOKIE_NAME', 'kobonaut')
-    # The trusted CSRF origins must encompass Enketo's subdomain. See
-    # https://docs.djangoproject.com/en/2.2/ref/settings/#std:setting-CSRF_TRUSTED_ORIGINS
-    CSRF_TRUSTED_ORIGINS = [SESSION_COOKIE_DOMAIN, ".openclinica.io", ".openclinica-dev.io", ".openclinica-dev-eks.io", ".openclinica-staging.io", ".openclinica-staging-2.io"]
-    CSRF_COOKIE_SECURE = True
+# NOTE: For multi-tenant setups with separate subdomains, keep cookie domains as None
+# to ensure each subdomain has its own isolated session and CSRF tokens
+SESSION_COOKIE_DOMAIN = None
+SESSION_COOKIE_NAME = env.str('SESSION_COOKIE_NAME', 'kobonaut')
+CSRF_COOKIE_DOMAIN = None
+CSRF_TRUSTED_ORIGINS = [
+    ".openclinica.io",
+    ".openclinica-dev.io",
+    ".openclinica-dev-eks.io",
+    ".openclinica-staging.io",
+    ".openclinica-staging-2.io",
+    ".kobo.local",
+    ".localhost.io",
+]
 CSRF_COOKIE_SAMESITE = 'None'
-CSRF_COOKIE_DOMAIN = env.str('CSRF_COOKIE_DOMAIN', None)
 CSRF_COOKIE_NAME = 'occsrftoken'
 
-SESSION_COOKIE_AGE = 60*60*24 # Session age is 24 hour
-SESSION_SAVE_EVERY_REQUEST = True # Renew session every request made
-SESSION_COOKIE_SECURE = True
-SESSION_COOKIE_SAMESITE = 'None'
+SESSION_SAVE_EVERY_REQUEST = True
 
 ENKETO_CSRF_COOKIE_NAME = env.str('ENKETO_CSRF_COOKIE_NAME', '__csrf')
 
