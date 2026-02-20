@@ -36,6 +36,8 @@ class CurrentUserSerializer(serializers.ModelSerializer):
     )
     user_type = serializers.SerializerMethodField()
     subdomain = serializers.SerializerMethodField()
+    user_uuid = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -58,6 +60,8 @@ class CurrentUserSerializer(serializers.ModelSerializer):
             'social_accounts',
             'user_type',
             'subdomain',
+            'user_uuid',
+            'customer_name'
         )
         read_only_fields = ('email',)
 
@@ -96,6 +100,19 @@ class CurrentUserSerializer(serializers.ModelSerializer):
         if request and request.user:
             return KeycloakModel.objects.get(user=request.user).subdomain
         return None
+
+    def get_user_uuid(self, obj):
+        request = self.context.get('request', False)
+        if not request:
+            return None
+        return request.session.get('oc_user_uuid')
+
+    def get_customer_name(self, obj):
+        request = self.context.get('request', False)
+        if not request:
+            return None
+        return request.session.get('oc_customer_name')
+
 
     def to_representation(self, obj):
         if obj.is_anonymous:

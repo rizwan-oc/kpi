@@ -27,6 +27,7 @@ import projectsRoutes from 'js/projects/routes';
 // Workaround https://github.com/remix-run/react-router/issues/8139
 // eslint-disable-next-line no-duplicate-imports
 import {unstable_HistoryRouter as HistoryRouter, Route} from 'react-router-dom';
+import {UserPilotRouteTracking} from './userPilotTracking';
 
 const Reports = React.lazy(() =>
   import(/* webpackPrefetch: true */ 'js/components/reports/reports')
@@ -127,6 +128,7 @@ const AllRoutes = class AllRoutes extends React.Component {
     return (
       <HistoryRouter history={history}>
         <Tracking />
+        <UserPilotRouteTracking />
         <Routes>
           <Route path={ROUTES.ROOT} element={<App />}>
             <Route path={ROUTES.ROOT} element={<Navigate to={ROUTES.LIBRARY} replace />} />

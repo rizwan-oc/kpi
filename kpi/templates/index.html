@@ -21,7 +21,9 @@
     {% if google_analytics_token %}
       <meta name="google-analytics-token" content="{{ google_analytics_token }}">
     {% endif %}
-
+    {% if user_pilot_sdk_token %}
+        <meta name="user_pilot_sdk_token" content="{{ user_pilot_sdk_token }}">
+    {% endif %}
     {% load render_bundle from webpack_loader %}
 
     <link rel="apple-touch-icon" sizes="180x180" href="{% static 'apple-touch-icon.png' %}" />

@@ -12,6 +12,7 @@ import {
   updateCrossStorageTimeOut
 } from 'js/ocutils';
 import cloneDeep from 'lodash.clonedeep';
+import userpilot from 'js/userpilot';
 
 class SessionStore {
   currentAccount: AccountResponse | {username: string; user_type: string; subdomain: string} = {
@@ -67,6 +68,7 @@ class SessionStore {
               log('Warning: Valid account has empty username, skipping cross-storage checks');
             }
             this.isLoggedIn = true;
+            userpilot.identify(account);
             window.parent.postMessage('fd_loggedin', '*');
             // Save UI language to Back-end for language usage statistics.
             // Logging in causes the whole page to be reloaded, so we don't need

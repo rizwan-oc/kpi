@@ -14,6 +14,8 @@ def external_service_tokens(request):
         out['google_analytics_token'] = settings.GOOGLE_ANALYTICS_TOKEN
     if settings.RAVEN_JS_DSN:
         out['raven_js_dsn'] = settings.RAVEN_JS_DSN
+    if settings.USER_PILOT_SDK_TOKEN:
+        out['user_pilot_sdk_token'] = settings.USER_PILOT_SDK_TOKEN
     return out
 
 

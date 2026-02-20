@@ -676,6 +676,7 @@ TEMPLATES = [
 
 DEFAULT_SUBMISSIONS_COUNT_NUMBER_OF_DAYS = 31
 GOOGLE_ANALYTICS_TOKEN = os.environ.get('GOOGLE_ANALYTICS_TOKEN')
+USER_PILOT_SDK_TOKEN = os.environ.get('USER_PILOT_SDK_TOKEN')
 RAVEN_JS_DSN_URL = env.url('RAVEN_JS_DSN', default=None)
 RAVEN_JS_DSN = None
 if RAVEN_JS_DSN_URL:
@@ -790,6 +791,24 @@ if STRIPE_ENABLED:
     stripe_domain = "https://js.stripe.com"
     CSP_SCRIPT_SRC.append(stripe_domain)
     CSP_FRAME_SRC.append(stripe_domain)
+if USER_PILOT_SDK_TOKEN:
+    CSP_SCRIPT_SRC.extend(['https://*.userpilot.io'])
+    CSP_CONNECT_SRC.extend(['https://*.userpilot.io', 'wss://*.userpilot.io'])
+    CSP_IMG_SRC.extend([
+        'https://www.meddra.org',
+        'https://*.userpilot.io'
+    ])
+    CSP_STYLE_SRC.extend([
+        'https://fonts.googleapis.com',
+        'https://*.userpilot.io'
+    ])
+    CSP_FONT_SRC = getattr(locals(), 'CSP_FONT_SRC', CSP_DEFAULT_SRC) + [
+        'https://fonts.gstatic.com',
+        'https://*.userpilot.io'
+    ]
+    CSP_FRAME_SRC.extend([
+        'https://*.userpilot.io'
+    ])
 
 CSP_OC_SITES = [
     'https://*.openclinica-dev.io',

@@ -422,6 +422,8 @@ class OpenIdConnectBackend(OIDCAuthenticationBackend): # pragma: no cover
 
         if payload:
             self.store_tokens(access_token, id_token)
+            self.store_user_uuid(access_token)
+            self.store_customer_name(access_token)
             try:
                 return self.get_or_create_user(access_token, id_token, payload, get_subdomain(request))
             except SuspiciousOperation as exc:
@@ -429,6 +431,66 @@ class OpenIdConnectBackend(OIDCAuthenticationBackend): # pragma: no cover
                 return None
 
         return None
+
+    def store_user_uuid(self, access_token):
+        """Extract userUuid from the access token's userContext claim and store
+        it in the session.
+        Args:
+            access_token (str): Raw (encoded) OIDC access token
+        """
+        try:
+            decoded_token = JWT().unpack(access_token).payload()
+            user_context = decoded_token.get(
+                'https://www.openclinica.com/userContext', {}
+            )
+            user_uuid = user_context.get('userUuid')
+        except Exception as e:
+            LOGGER.error('Failed to extract userUuid from access token: %s', e)
+            return
+
+        if not user_uuid:
+            LOGGER.error('Empty userUuid is received from access_token')
+            return
+
+        self.request.session['oc_user_uuid'] = user_uuid
+
+    def store_customer_name(self, access_token):
+        """Fetch customer name from customer-service using the customerUuid
+        from the access token and store it in the session.
+
+        Args:
+            access_token (str): Raw (encoded) OIDC access token
+        """
+        try:
+            decoded_token = JWT().unpack(access_token).payload()
+            user_context = decoded_token.get(
+                'https://www.openclinica.com/userContext', {}
+            )
+            customer_uuid = user_context.get('customerUuid')
+        except Exception as e:
+            LOGGER.error('Failed to extract customerUuid from access token: %s', e)
+            return
+
+        if not customer_uuid:
+            LOGGER.error('Empty customerUuid is received from access_token')
+            return
+
+        customer_url = '{}/customer-service/api/customers/{}'.format(
+            settings.OC_BUILD_URL, customer_uuid
+        )
+        headers = {'Authorization': 'Bearer {}'.format(access_token)}
+        try:
+            response = requests.get(customer_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            customer_name = response.json().get('name')
+        except Exception as e:
+            LOGGER.error(
+                'Failed to retrieve customer name for customerUuid: %s, %s',
+                customer_uuid, e
+            )
+            return
+
+        self.request.session['oc_customer_name'] = customer_name
 
     def retrieve_matching_jwk(self, token):
         """Get the signing key by exploring the JWKS endpoint of the OP.

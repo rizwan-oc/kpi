@@ -625,6 +625,7 @@ interface SocialAccount {
 
 export interface AccountResponse {
   username: string;
+  user_uuid: string;
   first_name: string;
   last_name: string;
   email: string;
@@ -663,6 +664,7 @@ export interface AccountResponse {
   };
   social_accounts: SocialAccount[];
   subdomain: string;
+  customer_name: string;
 }
 
 export interface AccountRequest {
