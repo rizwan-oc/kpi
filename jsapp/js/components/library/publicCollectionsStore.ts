@@ -1,4 +1,5 @@
 import Reflux from 'reflux';
+import {when} from 'mobx';
 import type {Update} from 'history';
 import searchBoxStore, {SEARCH_CONTEXTS} from 'js/components/header/searchBoxStore';
 import assetUtils from 'js/assetUtils';
@@ -7,6 +8,7 @@ import {
   isPublicCollectionsRoute,
 } from 'js/router/routerUtils';
 import {actions} from 'js/actions';
+import sessionStore from 'js/stores/session';
 import {
   ORDER_DIRECTIONS,
   ASSETS_TABLE_COLUMNS,
@@ -95,6 +97,9 @@ class PublicCollectionsStore extends Reflux.Store {
     actions.resources.createResource.completed.listen(this.onAssetCreated.bind(this));
     actions.resources.deleteAsset.completed.listen(this.onDeleteAssetCompleted.bind(this));
 
+    // Wait for login before starting store
+    when(() => sessionStore.isLoggedIn, this.startupStore.bind(this));
+
     // startup store after config is ready
     actions.permissions.getConfig.completed.listen(this.startupStore.bind(this));
   }
@@ -104,7 +109,7 @@ class PublicCollectionsStore extends Reflux.Store {
    * otherwise wait until route changes to a library (see `onRouteChange`)
    */
   startupStore() {
-    if (!this.isInitialised && isPublicCollectionsRoute() && !this.data.isFetchingData) {
+    if (!this.isInitialised && isPublicCollectionsRoute() && !this.data.isFetchingData && sessionStore.isLoggedIn) {
       this.fetchData(true);
     }
   }

@@ -42,7 +42,6 @@ class SessionStore {
           this.isInitialLoadComplete = true;
           if ('email' in account) {
             this.currentAccount = account;
-            this.isLoggedIn = true;
             const currentUserName = this.currentAccount.username;
             if (currentUserName !== '') {
               const crossStorageUserName = currentUserName.slice(0, currentUserName.lastIndexOf('+'))
@@ -52,15 +51,22 @@ class SessionStore {
                 await checkCrossStorageTimeOut();
                 await updateCrossStorageTimeOut();
               } catch (err) {
-                if (err == 'logout') {
-                  console.log('triggerLoggedIn logout');
+                if (err == 'logout' || err == 'user-changed') {
+                  if (err == 'logout') {
+                    console.log('triggerLoggedIn logout');
+                  } else {
+                    console.log('triggerLoggedIn user changed');
+                  }
                   actions.auth.logout();
-                } else if (err == 'user-changed') {
-                  console.log('triggerLoggedIn user changed');
-                  actions.auth.logout();
+                  return;
                 }
+                // Other errors (e.g., connection/timeout) are caught but don't force logout
               }
+            } else {
+              // Valid account with empty username - this shouldn't happen
+              log('Warning: Valid account has empty username, skipping cross-storage checks');
             }
+            this.isLoggedIn = true;
             window.parent.postMessage('fd_loggedin', '*');
             // Save UI language to Back-end for language usage statistics.
             // Logging in causes the whole page to be reloaded, so we don't need

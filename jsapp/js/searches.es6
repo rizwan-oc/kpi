@@ -440,7 +440,10 @@ function SearchContext(opts={}) {
       // if hashes don't match, relaunch search (otherwise, current result set is same as BE)
 
       if (searchStore.state.defaultQueryResultsList === undefined) {
-        this.searchDefault();
+        // avoid unauthenticated backend calls
+        if (sessionStore.isLoggedIn) {
+          this.searchDefault();
+        }
       } else {
         searchStore.update({defaultQueryState: 'done'});
 

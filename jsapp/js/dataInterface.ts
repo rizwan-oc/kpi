@@ -1409,9 +1409,7 @@ export const dataInterface: DataInterface = {
     } else {
       query = COMMON_QUERIES.qbt;
     }
-    if (!params.uid) {
-      query += ' AND parent:null';
-    } else {
+    if (params.uid) {
       query += ` AND parent__uid:${params.uid}`;
     }
 
