@@ -59,7 +59,9 @@ export function getAssetOwnerDisplayName(username: string) {
   ) {
     return t('me');
   } else {
-    return username;
+    // Strip instance suffix (e.g. "root+cust2" → "root") for display only
+    const plusIndex = username.indexOf('+');
+    return plusIndex !== -1 ? username.substring(0, plusIndex) : username;
   }
 }
 
