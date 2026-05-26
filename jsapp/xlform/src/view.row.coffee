@@ -694,7 +694,7 @@ module.exports = do ->
       hiddenFields = ['label', 'hint', 'type', 'select_from_list_name', 'kobo--matrix_list', 'parameters', 'tags', 'instance::oc:contactdata', 'instance::oc:identifier']
       for [key, val] in @model.attributesArray() when !key.match(/^\$/) and key not in hiddenFields
         if key is 'required'
-          if questionType isnt 'note' and questionType isnt 'calculate' and !isEConsentSig
+          if questionType not in ['note', 'calculate'] and !isEConsentSig
             @mandatorySetting = new $viewMandatorySetting.MandatorySettingView({
               model: @model.get('required')
             }).render().insertInDOM(@)
