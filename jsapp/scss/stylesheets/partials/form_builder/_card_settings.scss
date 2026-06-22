@@ -526,3 +526,95 @@
         border-left: 0px;
     }
 }
+
+// ---- Integer appearance card-grid section ----
+
+.appearance-section--hidden {
+  display: none;
+}
+
+.appearance-card-content.is-collapsed {
+  display: none;
+}
+
+.appearance-pill {
+  display: inline-block;
+  background: colors.$kobo-blue;
+  color: colors.$kobo-white;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.appearance-pill--hidden {
+  display: none;
+}
+
+.integer-appearance-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.integer-appearance-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  background: colors.$kobo-white;
+  border: 1px solid colors.$kobo-gray-65;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  min-height: 72px;
+  transition: border-color 0.15s ease;
+
+  &:hover {
+    border-color: colors.$kobo-blue;
+  }
+
+  &.integer-appearance-card--selected {
+    border: 2px solid colors.$kobo-blue;
+    background: #edf4fc;
+  }
+}
+
+.integer-appearance-card__icon {
+  width: 44px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.integer-appearance-card__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: colors.$kobo-gray-40;
+  line-height: 1.3;
+
+  .integer-appearance-card--selected & {
+    color: colors.$kobo-blue;
+  }
+}
+
+.integer-appearance-custom-input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid colors.$kobo-gray-65;
+  border-radius: 3px;
+  box-sizing: border-box;
+}

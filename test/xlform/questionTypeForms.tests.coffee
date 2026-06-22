@@ -91,12 +91,10 @@ do ->
         expect(types.indexOf('year')).not.toBe(-1)
 
     describe 'integer', ->
-      it 'returns appearance options for integer', ->
+      it 'getTypes() returns undefined for integer (card grid replaces dropdown)', ->
         ctx = buildAppearanceMixinCtx('integer')
         types = ctx.getTypes()
-        expect(Array.isArray(types)).toBe(true)
-        expect(types.indexOf('analog-scale horizontal')).not.toBe(-1)
-        expect(types.indexOf('analog-scale vertical')).not.toBe(-1)
+        expect(types).toBeUndefined()
 
     describe 'types with no specific appearance options', ->
       noAppTypes = ['decimal', 'note', 'file', 'audio', 'video']
@@ -148,11 +146,10 @@ do ->
       expect(result.indexOf('<select')).not.toBe(-1)
       expect(result.indexOf('month-year')).not.toBe(-1)
 
-    it 'integer html() renders a dropdown with analog-scale options', ->
+    it 'integer html() returns null (card grid rendered by view.row.coffee)', ->
       ctx = buildAppearanceMixinCtx('integer')
       result = ctx.html()
-      expect(result.indexOf('<select')).not.toBe(-1)
-      expect(result.indexOf('analog-scale')).not.toBe(-1)
+      expect(!result || result.indexOf('<select') is -1).toBe(true)
 
     it 'calculate html() does not render a dropdown (no predefined appearance options)', ->
       ctx = buildAppearanceMixinCtx('calculate')

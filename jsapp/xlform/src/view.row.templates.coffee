@@ -120,6 +120,14 @@ module.exports = do ->
               <div class="card__settings__fields-col js-card-settings-col-left"></div>
               <div class="card__settings__fields-col js-card-settings-col-right"></div>
             </div>
+            <div class="js-appearance-section appearance-section appearance-section--hidden">
+              <div class="card__settings__advanced-toggle js-appearance-section-toggle" aria-expanded="false">
+                <span>#{t('Appearance')}</span>
+                <span class="js-appearance-pill appearance-pill"></span>
+                <i class="k-icon k-icon-angle-down card__settings__advanced-toggle__icon" aria-hidden="true"></i>
+              </div>
+              <div class="js-appearance-card-content appearance-card-content is-collapsed"></div>
+            </div>
             <div class="card__settings__advanced-toggle js-card-settings-advanced-toggle" aria-expanded="false" aria-controls="js-card-settings-row-options-advanced">
               <span>#{t('Advanced options')}</span>
               <i class="k-icon k-icon-angle-down card__settings__advanced-toggle__icon" aria-hidden="true"></i>
