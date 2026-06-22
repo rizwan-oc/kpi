@@ -41,13 +41,13 @@ INTEGER_APPEARANCE_SVGS =
   'custom': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 34" fill="none"><path d="M12 8 Q6 8 6 14 L6 20 Q6 26 12 26" stroke="#444" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M40 8 Q46 8 46 14 L46 20 Q46 26 40 26" stroke="#444" stroke-width="1.5" fill="none" stroke-linecap="round"/><text x="17" y="22" font-size="12" fill="#378ADD" font-family="Menlo, Consolas, monospace" font-weight="700">&lt;/&gt;</text></svg>'
 
 INTEGER_APPEARANCE_CARDS = [
-  { value: '',                                    label: 'Number input',                  svgKey: 'number-input' }
-  { value: 'analog-scale horizontal',             label: 'Horizontal slider',             svgKey: 'horizontal-slider' }
-  { value: 'analog-scale horizontal no-ticks',    label: 'Horizontal slider (no ticks)',  svgKey: 'horizontal-slider-no-ticks' }
-  { value: 'analog-scale vertical',              label: 'Vertical slider',               svgKey: 'vertical-slider' }
-  { value: 'analog-scale vertical no-ticks',      label: 'Vertical slider (no ticks)',    svgKey: 'vertical-slider-no-ticks' }
-  { value: 'analog-scale vertical show-scale',    label: 'Vertical slider with scale',    svgKey: 'vertical-slider-with-scale' }
-  { value: 'other',                               label: 'Custom',                        svgKey: 'custom' }
+  { value: '',                                  svgKey: 'number-input' }
+  { value: 'analog-scale horizontal',           svgKey: 'horizontal-slider' }
+  { value: 'analog-scale horizontal no-ticks',  svgKey: 'horizontal-slider-no-ticks' }
+  { value: 'analog-scale vertical',             svgKey: 'vertical-slider' }
+  { value: 'analog-scale vertical no-ticks',    svgKey: 'vertical-slider-no-ticks' }
+  { value: 'analog-scale vertical show-scale',  svgKey: 'vertical-slider-with-scale' }
+  { value: 'other',                             svgKey: 'custom' }
 ]
 
 module.exports = do ->
@@ -1054,6 +1054,9 @@ module.exports = do ->
       return
 
     _integerCardValueFromModel: (modelValue) ->
+      return '' if not modelValue or modelValue is 'default'
+      stripped = modelValue.replace(/\bw\d+\b/g, '').trim()
+      return '' if not stripped
       KNOWN_VALUES = [
         'analog-scale vertical show-scale'
         'analog-scale horizontal no-ticks'
@@ -1061,9 +1064,8 @@ module.exports = do ->
         'analog-scale horizontal'
         'analog-scale vertical'
       ]
-      return '' if not modelValue or modelValue is 'default'
       for v in KNOWN_VALUES
-        return v if modelValue.indexOf(v) > -1
+        return v if stripped.indexOf(v) > -1
       'other'
 
     _buildIntegerAppearanceSection: (appearanceModel) ->
@@ -1117,7 +1119,7 @@ module.exports = do ->
               $customInput.hide()
               currentFull = (appearanceModel.get('value') or '').trim()
               widthPart = ''
-              for wOpt in ['w1','w2','w3','w4','w5','w6','w7','w8','w9','w10']
+              for wOpt in ['w10','w9','w8','w7','w6','w5','w4','w3','w2','w1']
                 if currentFull.indexOf(wOpt) > -1
                   widthPart = wOpt
                   break
