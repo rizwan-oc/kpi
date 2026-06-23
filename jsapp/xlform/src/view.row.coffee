@@ -50,6 +50,15 @@ INTEGER_APPEARANCE_CARDS = [
   { value: 'other',                             svgKey: 'custom' }
 ]
 
+DECIMAL_APPEARANCE_SVGS =
+  'decimal-input': '<svg width="72" height="44" viewBox="0 0 72 44" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="13" width="62" height="18" rx="3" stroke="#888" stroke-width="1.3"/><rect x="10" y="18" width="20" height="8" rx="1" fill="#888" fill-opacity="0.15"/><circle cx="34" cy="22" r="1.5" fill="#888" fill-opacity="0.5"/><rect x="37" y="18" width="10" height="8" rx="1" fill="#888" fill-opacity="0.1"/><rect x="52" y="13" width="15" height="9" fill="none" stroke="#ccc" stroke-width="0.5"/><rect x="52" y="22" width="15" height="9" fill="none" stroke="#ccc" stroke-width="0.5"/><text x="59" y="19" font-size="7" fill="#888" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif">▲</text><text x="59" y="27" font-size="7" fill="#888" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif">▼</text></svg>'
+  'custom': '<svg width="72" height="44" viewBox="0 0 72 44" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="9" width="56" height="10" rx="2" stroke="#888" stroke-width="1.1" stroke-dasharray="3 2"/><rect x="8" y="25" width="56" height="10" rx="2" stroke="#888" stroke-width="1.1" stroke-dasharray="3 2"/><text x="36" y="16" font-size="6" fill="#888" text-anchor="middle" dominant-baseline="middle" font-family="monospace">appearance=</text><text x="36" y="31" font-size="5.5" fill="#888" text-anchor="middle" dominant-baseline="middle" font-family="monospace">w3 my-class</text></svg>'
+
+DECIMAL_APPEARANCE_CARDS = [
+  { value: 'default', svgKey: 'decimal-input' }
+  { value: 'other',   svgKey: 'custom' }
+]
+
 module.exports = do ->
   class BaseRowView extends Backbone.View
     tagName: 'li'
@@ -775,6 +784,10 @@ module.exports = do ->
                 new $viewRowDetail.DetailView(model: val, rowView: @).render().insertInDOM(@)
                 @_buildIntegerAppearanceSection(val)
                 continue
+              else if key is 'appearance' and questionType is 'decimal'
+                new $viewRowDetail.DetailView(model: val, rowView: @).render().insertInDOM(@)
+                @_buildDecimalAppearanceSection(val)
+                continue
               # Note: For PII items, bind::oc:briefdescription and bind::oc:description
               # DetailViews are still rendered so their afterRender can hide+clear values
               new $viewRowDetail.DetailView(model: val, rowView: @).render().insertInDOM(@)
@@ -1128,6 +1141,74 @@ module.exports = do ->
       $content.append($grid).append($customInput)
 
       @appearanceSection.find('.js-appearance-pill').text(CARD_LABELS[cardValue] or CARD_LABELS[''])
+
+      $customInput.on 'input blur change', =>
+        if $customInput.is(':visible')
+          customVal = $customInput.val().trim()
+          appearanceModel.set('value', if customVal then customVal else 'other')
+
+    _decimalCardValueFromModel: (modelValue) ->
+      return 'default' if not modelValue
+      stripped = modelValue.replace(/\bw\d+\b/g, '').trim()
+      return 'default' if stripped is 'default'
+      'other'
+
+    _buildDecimalAppearanceSection: (appearanceModel) ->
+      modelValue = (appearanceModel?.get('value') or '').trim()
+      cardValue = @_decimalCardValueFromModel(modelValue)
+
+      CARD_LABELS =
+        'default': t('Decimal input')
+        'other': t('Custom')
+
+      @appearanceSection.removeClass('appearance-section--hidden')
+
+      $content = @appearanceSection.find('.js-appearance-card-content')
+      $grid = $('<div class="integer-appearance-card-grid"></div>')
+
+      $customInput = $('<input type="text" class="integer-appearance-custom-input" />')
+      $customInput.attr('placeholder', t('Enter appearance value'))
+      if cardValue isnt 'other'
+        $customInput.hide()
+      else if modelValue isnt 'other' and modelValue isnt ''
+        $customInput.val(modelValue)
+
+      for card in DECIMAL_APPEARANCE_CARDS
+        do (card) =>
+          isSelected = card.value is cardValue
+          $card = $('<div></div>')
+          $card.addClass('integer-appearance-card')
+          if isSelected
+            $card.addClass('integer-appearance-card--selected')
+          $iconDiv = $('<div class="integer-appearance-card__icon"></div>')
+          $iconDiv.html(DECIMAL_APPEARANCE_SVGS[card.svgKey])
+          $labelDiv = $('<div class="integer-appearance-card__label"></div>')
+          $labelDiv.text(CARD_LABELS[card.value])
+          $card.append($iconDiv).append($labelDiv)
+          $grid.append($card)
+
+          $card.on 'click', =>
+            $grid.find('.integer-appearance-card').removeClass('integer-appearance-card--selected')
+            $card.addClass('integer-appearance-card--selected')
+            @appearanceSection.find('.js-appearance-pill').text(CARD_LABELS[card.value])
+            if card.value is 'other'
+              $customInput.show()
+              customVal = $customInput.val().trim()
+              appearanceModel.set('value', if customVal then customVal else 'other')
+            else
+              $customInput.hide()
+              currentFull = (appearanceModel.get('value') or '').trim()
+              widthPart = ''
+              for wOpt in ['w10','w9','w8','w7','w6','w5','w4','w3','w2','w1']
+                if currentFull.indexOf(wOpt) > -1
+                  widthPart = wOpt
+                  break
+              newVal = if card.value and widthPart then "#{card.value} #{widthPart}" else card.value or widthPart or ''
+              appearanceModel.set('value', newVal)
+
+      $content.append($grid).append($customInput)
+
+      @appearanceSection.find('.js-appearance-pill').text(CARD_LABELS[cardValue])
 
       $customInput.on 'input blur change', =>
         if $customInput.is(':visible')
