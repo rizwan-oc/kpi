@@ -855,7 +855,7 @@ module.exports = do ->
         # Hide Validation Criteria tab
         @$("li[data-card-settings-tab-id='validation-criteria']").hide()
 
-        # Add Signature checkbox label field (required)
+        # Add Signature checkbox label field (optional)
         placeholder = 'Enter text to appear next to signature field, (e.g. "I have read the information above and agree to participate.")'
         fieldHtml = $viewRowDetail.Templates.textarea(@model.cid + '-siglabel', 'oc_signature_checkbox_label', t('Signature Checkbox Label'), '', placeholder)
         $field = $(fieldHtml)
@@ -863,23 +863,8 @@ module.exports = do ->
         $input = $field.find('textarea').eq(0)
         $input.val(econsentSignature.getEConsentSignatureCheckboxLabel(@model) || '')
 
-        showOrHideRequired = =>
-          val = ($input.val() || '').trim()
-          $wrap = $input.closest('div')
-          $wrap.removeClass('input-error')
-          $input.siblings('.message').remove()
-          if val == ''
-            $wrap.addClass('input-error')
-            $message = $('<div/>').addClass('message').text(t('This field is required'))
-            $input.after($message)
-          return
-
-        $input.on 'keyup', =>
-          showOrHideRequired()
-
         lastVal = ($input.val() || '').trim()
         $input.on 'blur change', =>
-          showOrHideRequired()
           val = ($input.val() || '').trim()
           if val isnt lastVal
             lastVal = val
