@@ -1,53 +1,94 @@
-import React, {useEffect, useState} from 'react';
-import sessionStore from 'js/stores/session';
-import {
-  getUserEmails,
-  setUserEmail,
-  deleteUnverifiedUserEmails,
-} from './emailSection.api';
-import type {EmailResponse} from './emailSection.api';
-import style from './emailSection.module.scss';
-import Button from 'jsapp/js/components/common/button';
-import TextBox from 'jsapp/js/components/common/textBox';
-import Icon from 'jsapp/js/components/common/icon';
-import {formatTime} from 'jsapp/js/utils';
+import React, { useEffect, useState } from 'react'
+
+import { Group, Text } from '@mantine/core'
+import cx from 'classnames'
+import securityStyles from '#/account/security/securityRoute.module.scss'
+import { MemberRoleEnum } from '#/api/models/memberRoleEnum'
+import { useOrganizationAssumed } from '#/api/useOrganizationAssumed'
+import Button from '#/components/common/button'
+import Icon from '#/components/common/icon'
+import TextBox from '#/components/common/textBox'
+import type { FailResponse } from '#/dataInterface'
+import sessionStore from '#/stores/session'
+import { formatTime, notify } from '#/utils'
+import { deleteUnverifiedUserEmails, getUserEmails, setUserEmail } from './emailSection.api'
+import type { EmailResponse } from './emailSection.api'
+import styles from './emailSection.module.scss'
 
 interface EmailState {
-  emails: EmailResponse[];
-  newEmail: string;
-  refreshedEmail: boolean;
-  refreshedEmailDate: string;
+  emails: EmailResponse[]
+  newEmail: string
+  refreshedEmail: boolean
+  refreshedEmailDate: string
+  fieldErrors: string[]
 }
 
 export default function EmailSection() {
-  const [session] = useState(() => sessionStore);
+  const [session] = useState(() => sessionStore)
+
+  const [organization] = useOrganizationAssumed()
+
+  let initialEmail = ''
+  if ('email' in session.currentAccount) {
+    initialEmail = session.currentAccount.email
+  }
 
   const [email, setEmail] = useState<EmailState>({
     emails: [],
-    newEmail: '',
+    newEmail: initialEmail,
     refreshedEmail: false,
     refreshedEmailDate: '',
-  });
+    fieldErrors: [],
+  })
 
   useEffect(() => {
     getUserEmails().then((data) => {
       setEmail({
         ...email,
         emails: data.results,
-      });
-    });
-  }, []);
+      })
+    })
+  }, [])
 
   function setNewUserEmail(newEmail: string) {
-    setUserEmail(newEmail).then(() => {
-      getUserEmails().then((data) => {
+    // Clear errors before making an API call
+    setEmail({
+      ...email,
+      fieldErrors: [],
+    })
+
+    setUserEmail(newEmail).then(
+      (response) => {
+        if ('primary' in response) {
+          getUserEmails().then((data) => {
+            setEmail({
+              ...email,
+              emails: data.results,
+              newEmail: '',
+            })
+          })
+        } else {
+          // If there is no primary email in response, we display an error. This can happen for example when user has
+          // been created through Django admin without email address.
+          setEmail({
+            ...email,
+            fieldErrors: ['Primary email missing'],
+          })
+        }
+      },
+      (err: FailResponse) => {
+        let errMessages: string[] = []
+        if (err.responseJSON?.email && typeof err.responseJSON.email === 'string') {
+          errMessages.push(err.responseJSON.email)
+        } else if (Array.isArray(err.responseJSON?.email)) {
+          errMessages = err.responseJSON.email
+        }
         setEmail({
           ...email,
-          emails: data.results,
-          newEmail: '',
-        });
-      });
-    });
+          fieldErrors: errMessages,
+        })
+      },
+    )
   }
 
   function deleteNewUserEmail() {
@@ -58,16 +99,16 @@ export default function EmailSection() {
           emails: data.results,
           newEmail: '',
           refreshedEmail: false,
-        });
-      });
-    });
+        })
+      })
+    })
   }
 
   function resendNewUserEmail(unverfiedEmail: string) {
     setEmail({
       ...email,
       refreshedEmail: false,
-    });
+    })
 
     deleteUnverifiedUserEmails().then(() => {
       setUserEmail(unverfiedEmail).then(() => {
@@ -75,112 +116,107 @@ export default function EmailSection() {
           ...email,
           refreshedEmail: true,
           refreshedEmailDate: formatTime(new Date().toUTCString()),
-        });
-      });
-    });
+        })
+      })
+    })
   }
 
   function onTextFieldChange(value: string) {
     setEmail({
       ...email,
       newEmail: value,
-    });
+    })
   }
 
-  const currentAccount = session.currentAccount;
-  const unverifiedEmail = email.emails.find(
-    (userEmail) => !userEmail.verified && !userEmail.primary
-  );
+  function handleSubmit() {
+    const emailPattern = /[^@]+@[^@]+\.[^@]+/
+    if (emailPattern.test(email.newEmail)) {
+      setNewUserEmail(email.newEmail)
+    } else {
+      notify.error('Invalid email address')
+    }
+  }
+
+  const currentAccount = session.currentAccount
+  const unverifiedEmail = email.emails.find((userEmail) => !userEmail.verified && !userEmail.primary)
+  const isReady = session.isInitialLoadComplete && 'email' in currentAccount
+  const isSSO =
+    session.isInitialLoadComplete && 'social_accounts' in currentAccount && currentAccount.social_accounts.length >= 1
+  const userCanChangeEmail = organization.is_mmo ? organization.request_user_role !== MemberRoleEnum.member : true
 
   return (
-    <div className={style.root}>
-      <div className={style.titleSection}>
-        <h2 className={style.title}>{t('Email address')}</h2>
+    <section className={securityStyles.securitySection}>
+      <div className={securityStyles.securitySectionTitle}>
+        <h2 className={securityStyles.securitySectionTitleText}>{t('Email address')}</h2>
       </div>
 
-      <div className={style.bodySection}>
-        {!session.isPending &&
-          session.isInitialLoadComplete &&
-          'email' in currentAccount && (
-            <p className={style.currentEmail}>{currentAccount.email}</p>
-          )}
-
-        {unverifiedEmail?.email &&
-          !session.isPending &&
-          session.isInitialLoadComplete &&
-          'email' in currentAccount && (
-            <>
-              <div className={style.unverifiedEmail}>
-                <Icon name='alert' />
-                <p className={style['blurb']}>
-                  <strong>
-                    {t('Check your email ##UNVERIFIED_EMAIL##. ').replace(
-                      '##UNVERIFIED_EMAIL##',
-                      unverifiedEmail.email
-                    )}
-                  </strong>
-
-                  {t(
-                    'A verification link has been sent to confirm your ownership. Once confirmed, this address will replace ##UNVERIFIED_EMAIL##'
-                  ).replace('##UNVERIFIED_EMAIL##', currentAccount.email)}
-                </p>
-              </div>
-
-              <div className={style.editEmail}>
-                <Button
-                  label='Resend'
-                  size='m'
-                  color='blue'
-                  type='frame'
-                  onClick={resendNewUserEmail.bind(
-                    resendNewUserEmail,
-                    unverifiedEmail.email
-                  )}
-                />
-                <Button
-                  label='Remove'
-                  size='m'
-                  color='red'
-                  type='frame'
-                  onClick={deleteNewUserEmail}
-                />
-              </div>
-
-              {email.refreshedEmail && (
-                <label>
-                  {t('Email was sent again: ##TIMESTAMP##').replace(
-                    '##TIMESTAMP##',
-                    email.refreshedEmailDate
-                  )}
-                </label>
-              )}
-            </>
-          )}
-      </div>
-
-      <form
-        className={style.optionsSection}
-        onSubmit={(e) => {
-          e.preventDefault();
-          setNewUserEmail(email.newEmail);
-        }}
+      <div
+        className={cx([
+          securityStyles.securitySectionBody,
+          userCanChangeEmail ? styles.body : styles.emailUpdateDisabled,
+        ])}
       >
-        {/*TODO: Move TextBox into a modal--it messes up the flow of the row right now*/}
-        <TextBox
-          customModifiers='on-white'
-          value={email.newEmail}
-          placeholder={t('Type new email address')}
-          onChange={onTextFieldChange.bind(onTextFieldChange)}
-        />
+        {isReady && userCanChangeEmail ? (
+          <TextBox
+            value={email.newEmail}
+            placeholder={t('Type new email address')}
+            onChange={onTextFieldChange.bind(onTextFieldChange)}
+            type='email'
+            disabled={isSSO}
+          />
+        ) : (
+          <div className={styles.emailText}>{email.newEmail}</div>
+        )}
 
-        <Button
-          label='Change'
-          size='m'
-          color='blue'
-          type='frame'
-          onClick={setNewUserEmail.bind(setNewUserEmail, email.newEmail)}
-        />
-      </form>
-    </div>
-  );
+        {unverifiedEmail?.email && isReady && (
+          <>
+            <div className={styles.unverifiedEmail}>
+              <Icon name='alert' />
+              <p className={styles.blurb}>
+                <strong>
+                  {t('Check your email ##UNVERIFIED_EMAIL##. ').replace('##UNVERIFIED_EMAIL##', unverifiedEmail.email)}
+                </strong>
+
+                {t(
+                  'A verification link has been sent to confirm your ownership. Once confirmed, this address will replace ##UNVERIFIED_EMAIL##',
+                ).replace('##UNVERIFIED_EMAIL##', currentAccount.email)}
+              </p>
+            </div>
+
+            <div className={styles.unverifiedEmailButtons}>
+              <Button
+                label='Resend'
+                size='m'
+                type='secondary'
+                onClick={resendNewUserEmail.bind(resendNewUserEmail, unverifiedEmail.email)}
+              />
+              <Button label='Remove' size='m' type='secondary-danger' onClick={deleteNewUserEmail} />
+            </div>
+
+            {email.refreshedEmail && (
+              <label>
+                {t('Email was sent again: ##TIMESTAMP##').replace('##TIMESTAMP##', email.refreshedEmailDate)}
+              </label>
+            )}
+          </>
+        )}
+      </div>
+      {userCanChangeEmail && (
+        <div className={styles.options}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleSubmit()
+            }}
+          >
+            <Group gap='sm'>
+              <Text color='red'>{email.fieldErrors}</Text>
+
+              <Button label='Change' size='m' type='primary' onClick={handleSubmit} isDisabled={isSSO} />
+            </Group>
+          </form>
+        </div>
+      )}
+    </section>
+  )
 }

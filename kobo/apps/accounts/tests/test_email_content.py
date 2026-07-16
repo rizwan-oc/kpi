@@ -1,11 +1,9 @@
-import random
-
+from constance.test import override_config
 from django.contrib.auth import get_user_model
 from django.core import mail
-from django.test import override_settings, TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
-
 
 from kobo.apps.accounts.models import EmailContent
 
@@ -23,6 +21,15 @@ class EmailContentModelTestCase(TestCase):
             'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}
         }
     )
+    # use `override_config` decorator to deactivate all password validators
+    # to let this test use a simple password.
+    @override_config(
+        ENABLE_PASSWORD_MINIMUM_LENGTH_VALIDATION=False,
+        ENABLE_PASSWORD_USER_ATTRIBUTE_SIMILARITY_VALIDATION=False,
+        ENABLE_MOST_RECENT_PASSWORD_VALIDATION=False,
+        ENABLE_COMMON_PASSWORD_VALIDATION=False,
+        ENABLE_PASSWORD_CUSTOM_CHARACTER_RULES_VALIDATION=False,
+    )
     def test_custom_activation_email_template(self):
         email_content = EmailContent.objects.create(
             email_name='email_confirmation_signup_message',
@@ -37,6 +44,7 @@ class EmailContentModelTestCase(TestCase):
         username = 'user001'
         email = username + '@example.com'
         data = {
+            'name': 'username',
             'email': email,
             'password1': username,
             'password2': username,
@@ -51,7 +59,20 @@ class EmailContentModelTestCase(TestCase):
         assert mail.outbox[0].subject == email_subject.content
         assert email_content.content in mail.outbox[0].body
 
-    @override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}})
+    @override_settings(
+        CACHES={
+            'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}
+        }
+    )
+    # use `override_config` decorator to deactivate all password validators
+    # to let this test use a simple password.
+    @override_config(
+        ENABLE_PASSWORD_MINIMUM_LENGTH_VALIDATION=False,
+        ENABLE_PASSWORD_USER_ATTRIBUTE_SIMILARITY_VALIDATION=False,
+        ENABLE_MOST_RECENT_PASSWORD_VALIDATION=False,
+        ENABLE_COMMON_PASSWORD_VALIDATION=False,
+        ENABLE_PASSWORD_CUSTOM_CHARACTER_RULES_VALIDATION=False,
+    )
     def test_custom_activation_email_template_blank_content(self):
         email_content = EmailContent.objects.create(
             email_name='email_confirmation_signup_message',
@@ -71,12 +92,13 @@ class EmailContentModelTestCase(TestCase):
         username = 'user002'
         email = username + '@example.com'
         data = {
+            'name': username,
             'email': email,
             'password1': username,
             'password2': username,
             'username': username,
         }
-        default = "Thanks for signing up with KoboToolbox!"
+        default = 'Thanks for signing up with KoboToolbox!'
         # This is unreliable. On commit
         # 3d4dbdd4ac16b5739237fd9957d0140f50f17280, this assertion passes when
         # the entire test suite is run, but it fails when the this unit test is
@@ -97,23 +119,39 @@ class EmailContentModelTestCase(TestCase):
         assert email_content.content in mail.outbox[0].body
         assert default not in mail.outbox[0].body
 
-    @override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}})
+    @override_settings(
+        CACHES={
+            'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}
+        }
+    )
+    # use `override_config` decorator to deactivate all password validators
+    # to let this test use a simple password.
+    @override_config(
+        ENABLE_PASSWORD_MINIMUM_LENGTH_VALIDATION=False,
+        ENABLE_PASSWORD_USER_ATTRIBUTE_SIMILARITY_VALIDATION=False,
+        ENABLE_MOST_RECENT_PASSWORD_VALIDATION=False,
+        ENABLE_COMMON_PASSWORD_VALIDATION=False,
+        ENABLE_PASSWORD_CUSTOM_CHARACTER_RULES_VALIDATION=False,
+    )
     def test_default_activation_email_template(self):
         username = 'user003'
         email = username + '@example.com'
         data = {
+            'name': username,
             'email': email,
             'password1': username,
             'password2': username,
             'username': username,
         }
-        default_subject = "Activate your KoboToolbox Account"
-        default_greeting = "Thanks for signing up with KoboToolbox!"
-        default_body = "Confirming your account will give you access to " \
-                       "KoboToolbox applications. Please visit the following " \
-                       "URL to finish activation of your new account."
-        default_closing = "For help getting started, check out the KoboToolbox " \
-                          "user documentation: https://support.kobotoolbox.com "
+        default_subject = 'Activate your KoboToolbox Account'
+        default_greeting = 'Welcome to KoboToolbox!'
+        default_body = (
+            'To get started, please activate your account by clicking the link below:'
+        )
+        default_closing = (
+            'To get the most out of KoboToolbox, check out the following resources '
+            'and join the community:'
+        )
         request = self.client.post(self.signup_url, data)
         user = get_user_model().objects.get(email=email)
         assert request.status_code == status.HTTP_302_FOUND
@@ -124,4 +162,4 @@ class EmailContentModelTestCase(TestCase):
         assert default_greeting in mail.outbox[0].body
         assert default_body in mail.outbox[0].body
         assert default_closing in mail.outbox[0].body
-        assert "Best,\nKoboToolbox" in mail.outbox[0].body
+        assert 'Thanks for signing up!\nThe KoboToolbox Team' in mail.outbox[0].body

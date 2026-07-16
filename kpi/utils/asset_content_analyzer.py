@@ -82,6 +82,7 @@ class AssetContentAnalyzer:
 
         names_by_quality = {'good': [], 'bad': [], 'ok': []};
         index = 0
+        exclude_types = ['note', 'start', 'end', 'begin_group', 'end_group']
         for row in self.survey:
             if isinstance(row, dict):
                 if '$given_name' in row:
@@ -99,7 +100,11 @@ class AssetContentAnalyzer:
                 if _type in META_TYPES:
                     metas.add(_type)
                     continue
-                row_count += 1
+                if _type in exclude_types:
+                    continue
+                else:
+                    row_count += 1
+
                 index += 1
                 name_status = self.decide_name_quality(row)
                 names_by_quality[name_status].append({**row, 'index': index})
@@ -131,7 +136,7 @@ class AssetContentAnalyzer:
             ):
                 lock_any = True
         
-        if "version" in self.settings:
+        if isinstance(self.settings, dict) and 'version' in self.settings:
             self.settings_version = self.settings['version']
 
         summary = {

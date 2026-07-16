@@ -32,7 +32,7 @@ class AssetExportSettingsSerializer(serializers.ModelSerializer):
     data_url_csv = serializers.SerializerMethodField()
     data_url_xlsx = serializers.SerializerMethodField()
     name = serializers.CharField(allow_blank=True)
-    date_modified = serializers.CharField(read_only=True)
+    date_modified = serializers.ReadOnlyField()
     export_settings = WritableJSONField()
 
     class Meta:
@@ -166,8 +166,8 @@ class AssetExportSettingsSerializer(serializers.ModelSerializer):
         return reverse(
             'asset-export-settings-synchronous-data',
             kwargs={
-                'parent_lookup_asset': obj.asset.uid,
-                'uid': obj.uid,
+                'uid_asset': obj.asset.uid,
+                'uid_export_setting': obj.uid,
             },
             format='csv',
             request=self.context.get('request', None),
@@ -177,8 +177,8 @@ class AssetExportSettingsSerializer(serializers.ModelSerializer):
         return reverse(
             'asset-export-settings-synchronous-data',
             kwargs={
-                'parent_lookup_asset': obj.asset.uid,
-                'uid': obj.uid,
+                'uid_asset': obj.asset.uid,
+                'uid_export_setting': obj.uid,
             },
             format='xlsx',
             request=self.context.get('request', None),

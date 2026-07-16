@@ -1,0 +1,2 @@
+{"type":"server-started","port":53481,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:53481","screen_dir":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/44943-1776094273/content","state_dir":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/44943-1776094273/state"}
+{"type":"server-stopped","reason":"idle timeout"}

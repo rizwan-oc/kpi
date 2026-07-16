@@ -1,16 +1,7 @@
-# coding: utf-8
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import FieldError
-from django.db.models import (
-    Case,
-    Count,
-    F,
-    IntegerField,
-    Q,
-    Value,
-    When,
-)
+from django.db.models import Case, Count, F, IntegerField, Q, Value, When
 from django.db.models.query import QuerySet
 from django.utils.datastructures import MultiValueDictKeyError
 from rest_framework import filters
@@ -18,10 +9,10 @@ from rest_framework.request import Request
 
 from kpi.constants import (
     ASSET_SEARCH_DEFAULT_FIELD_LOOKUPS,
-    ASSET_STATUS_SHARED,
     ASSET_STATUS_DISCOVERABLE,
     ASSET_STATUS_PRIVATE,
     ASSET_STATUS_PUBLIC,
+    ASSET_STATUS_SHARED,
     PERM_DISCOVER_ASSET,
     PERM_PARTIAL_SUBMISSIONS,
     PERM_VIEW_ASSET,
@@ -30,21 +21,28 @@ from kpi.constants import (
 from kpi.exceptions import (
     QueryParserBadSyntax,
     QueryParserNotSupportedFieldLookup,
+    SearchQueryTooShortException,
 )
-from kpi.models import Asset, ObjectPermission
-from kpi.models.asset import UserAssetSubscription
-from kpi.utils.query_parser import get_parsed_parameters, parse, ParseError
-from kpi.utils.domain import get_subdomain
-from bossoidc2.models import Keycloak as KeycloakModel
+from kpi.models.asset import AssetDeploymentStatus, UserAssetSubscription
+from kpi.utils.django_orm_helper import OrderCustomCharField
 from kpi.utils.object_permission import (
-    get_objects_for_user,
     get_anonymous_user,
+    get_database_user,
+    get_objects_for_user,
     get_perm_ids_from_code_names,
 )
-from kpi.utils.permissions import is_user_anonymous, get_subdomain_user_ids
+from kpi.utils.permissions import is_user_anonymous
+from kpi.utils.query_parser import ParseError, get_parsed_parameters, parse
+
 from .models import Asset, ObjectPermission
 
-from kpi.utils.log import logging
+class DeploymentFilter:
+    DEPLOYMENT_STATUS_DEFAULT_ORDER = [
+        AssetDeploymentStatus.DEPLOYED.value,
+        AssetDeploymentStatus.DRAFT.value,
+        AssetDeploymentStatus.ARCHIVED.value,
+    ]
+
 
 class AssetOwnerFilterBackend(filters.BaseFilterBackend):
     """
@@ -53,11 +51,54 @@ class AssetOwnerFilterBackend(filters.BaseFilterBackend):
     """
 
     def filter_queryset(self, request, queryset, view):
-        fields = {"asset__owner": request.user}
+        fields = {'asset__owner': request.user}
         return queryset.filter(**fields)
 
 
-class AssetOrderingFilter(filters.OrderingFilter):
+class AssetOrganizationUsageFilter(filters.OrderingFilter, DeploymentFilter):
+
+    DEFAULT_USAGE_ORDERING_FIELDS = [
+        'name',
+        '_deployment_status',
+    ]
+
+    ordering_fields = DEFAULT_USAGE_ORDERING_FIELDS
+
+    def filter_queryset(self, request, queryset, view):
+        ordering = self.get_ordering(request, queryset, view)
+
+        if ordering:
+            queryset = queryset.order_by(*ordering)
+        else:
+            return queryset.order_by(
+                OrderCustomCharField(
+                    '_deployment_status',
+                    self.DEPLOYMENT_STATUS_DEFAULT_ORDER,
+                )
+            )
+
+        return queryset
+
+
+class AssetOrderingFilter(filters.OrderingFilter, DeploymentFilter):
+
+    DEFAULT_ORDERING_FIELDS = [
+        'asset_type',
+        'date_modified',
+        'date_deployed',
+        'date_modified__date',
+        'date_deployed__date',
+        'name',
+        'settings__sector',
+        'settings__sector__value',
+        'settings__description',
+        'owner__username',
+        'owner__extra_details__data__name',
+        'owner__extra_details__data__organization',
+        'owner__email',
+        '_deployment_status',
+        'last_modified_by',
+    ]
 
     def filter_queryset(self, request, queryset, view):
         query_params = request.query_params
@@ -96,41 +137,45 @@ class AssetOrderingFilter(filters.OrderingFilter):
                 )
 
             return queryset.order_by(*ordering)
+        else:
+            # Default ordering
+            return queryset.order_by(
+                OrderCustomCharField(
+                    '_deployment_status',
+                    self.DEPLOYMENT_STATUS_DEFAULT_ORDER,
+                ),
+                '-date_modified',
+            )
 
         return queryset
 
 
-class KpiObjectPermissionsFilter:
+class ExcludeOrgAssetFilter(filters.BaseFilterBackend):
+    """
+    Filters out assets marked as 'is_excluded_from_projects_list' for
+    organization owners in MMO organizations
+    """
+    def filter_queryset(self, request, queryset, view):
+        user = get_database_user(request.user)
+        organization = user.organization
+        if organization and organization.is_owner(user) and organization.is_mmo:
+            return queryset.exclude(
+                is_excluded_from_projects_list=True, owner_id=user.pk
+            )
+        return queryset
+
+
+class KpiObjectPermissionsFilter(filters.BaseFilterBackend):
 
     STATUS_PARAMETER = 'status'
     PARENT_UID_PARAMETER = 'parent__uid'
     DATA_SHARING_PARAMETER = 'data_sharing__enabled'
 
     def filter_queryset(self, request, queryset, view):
+
         user = request.user
 
-        # User can access assets/collections created by users with same subdomain
-        model_name = queryset.model._meta.model_name
-        if model_name == 'asset' or model_name == 'collection':
-            try:
-                subdomain_user_ids = get_subdomain_user_ids(user)
-                if model_name == 'asset':
-                    subdomain_assetIds = Asset.objects.filter(owner__in=subdomain_user_ids).values_list('id', flat=True)
-                    return queryset.filter(pk__in=subdomain_assetIds)
-                # elif model_name == 'collection':
-                #     subdomain_collectionIds = Collection.objects.filter(owner__in=subdomain_userIds).values_list('id', flat=True)
-                #     return queryset.filter(pk__in=subdomain_collectionIds)
-            except KeycloakModel.DoesNotExist:
-                # User has no Keycloak record; fall through to standard filtering
-                pass
-            except Exception:
-                logging.exception(
-                    'Unexpected error while filtering queryset by subdomain '
-                    'for user %s', user
-                )
-                raise
-
-        if user.is_superuser and view.action != 'list':
+        if user.is_superuser and view.detail:
             # For a list, we won't deluge the superuser with everyone else's
             # stuff. This isn't a list, though, so return it all
             return queryset
@@ -154,7 +199,7 @@ class KpiObjectPermissionsFilter:
 
         owned_and_explicit_shared = self._get_owned_and_explicitly_shared(user)
 
-        if view.action != 'list':
+        if view.detail:
             # Not a list, so discoverability doesn't matter
             assets = owned_and_explicit_shared.union(self._get_publics())
             return queryset.filter(pk__in=assets)
@@ -320,7 +365,9 @@ class KpiObjectPermissionsFilter:
             perms = ObjectPermission.objects.filter(
                 deny=False,
                 user=user,
-                permission_id=view_asset_perm_id)
+                permission_id=view_asset_perm_id,
+                asset__owner__is_active=True,
+            )
 
         return perms.values('asset')
 
@@ -368,17 +415,29 @@ class RelatedAssetPermissionsFilter(KpiObjectPermissionsFilter):
     """
     Uses KpiObjectPermissionsFilter to determine which assets the user
     may access, and then filters the provided queryset to include only objects
-    related to those assets. The queryset's model must be related to `Asset`
-    via a field named `asset`.
+    related to those assets.
+    If the current user is an admin of an organization, all assets of that organization
+    should be added too.
+    The queryset's model must be related to `Asset` via a field named `asset`.
     """
 
     def filter_queryset(self, request, queryset, view):
+
+        user = get_database_user(request.user)
+        organization = user.organization
+        if organization and organization.is_admin_only(user):
+            # Admins do not receive explicit permission assignments,
+            # but they have the same access to assets as the organization owner.
+            org_assets = Asset.objects.filter(owner=organization.owner_user_object)
+        else:
+            org_assets = Asset.objects.none()
+
         available_assets = super().filter_queryset(
             request=request,
             queryset=Asset.objects.all(),
             view=view
         )
-        return queryset.filter(asset__in=available_assets)
+        return queryset.filter(asset__in=available_assets | org_assets)
 
 
 class SearchFilter(filters.BaseFilterBackend):
@@ -392,6 +451,7 @@ class SearchFilter(filters.BaseFilterBackend):
     """
 
     def filter_queryset(self, request, queryset, view):
+
         try:
             q = request.query_params['q']
         except AttributeError:
@@ -401,6 +461,10 @@ class SearchFilter(filters.BaseFilterBackend):
                 return queryset
         except KeyError:
             return queryset
+
+        min_search_chars = getattr(view, 'min_search_chars', 0)
+        if min_search_chars and len(q) < min_search_chars:
+            raise SearchQueryTooShortException()
 
         try:
             q_obj = parse(
@@ -414,12 +478,14 @@ class SearchFilter(filters.BaseFilterBackend):
             QueryParserNotSupportedFieldLookup,
         ) as e:
             raise e
-
         try:
-            # If no search field is specified, the search term is compared
-            # to several default fields and therefore may return a copies
-            # of the same match, therefore the `distinct()` method is required
-            return queryset.filter(q_obj).distinct()
+            # If we are searching on an n-to-many field, we may get multiple results
+            # from the same model, so we need to de-duplicate with distinct(). Rely
+            # on the view to tell us if this is not necessary
+            if getattr(view, 'skip_distinct', False):
+                return queryset.filter(q_obj)
+            else:
+                return queryset.filter(q_obj).distinct()
         except (FieldError, ValueError):
             return queryset.model.objects.none()
 

@@ -3,22 +3,23 @@ import json
 import unittest
 from urllib.parse import unquote_plus
 
-from django.contrib.auth.models import User
 from django.urls import reverse
-from formpack.utils.expand_content import SCHEMA_VERSION
-from lxml import etree
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 
+from formpack.utils.expand_content import SCHEMA_VERSION
+from kobo.apps.kobo_auth.shortcuts import User
 from kpi.constants import ASSET_TYPE_COLLECTION
-from kpi.models import Asset, ExportTask
+from kpi.models import Asset, SubmissionExportTask
 from kpi.models.import_export_task import export_upload_to
 from kpi.serializers.v1.asset import AssetListSerializer
+
 # importing module instead of the class, avoid running the tests twice
 from kpi.tests.api.v2 import test_api_assets
 from kpi.tests.base_test_case import BaseTestCase
 from kpi.tests.kpi_test_case import KpiTestCase
-
+from kpi.tests.utils.transaction import immediate_on_commit
+from kpi.utils.xml import check_lxml_fromstring
 
 EMPTY_SURVEY = {'survey': [], 'schema': SCHEMA_VERSION, 'settings': {}}
 
@@ -43,6 +44,58 @@ class AssetListApiTests(test_api_assets.AssetListApiTests):
         self.assertIsNotNone(list_result_detail)
         self.assertDictEqual(expected_list_data, dict(list_result_detail))
 
+    @unittest.skip(reason='`owner_label` field only exists in v2 endpoint')
+    def test_asset_owner_label(self):
+        pass
+
+    @unittest.skip(reason='Only needed for v2')
+    def test_creator_permissions_on_import(self):
+        pass
+
+    @unittest.skip(reason='`last_modified_by` field only exists in v2 endpoint')
+    def test_last_modified_by_field_not_assigned(self):
+        pass
+
+    @unittest.skip(reason='`date_deployed` field only exists in v2 endpoint')
+    def test_list_can_load_with_desynchronized_assets(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, to remove soon')
+    def test_query_counts(self, mock_tracker):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_owner_without_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_owner_with_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_view_only_without_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_view_only_with_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_manager_without_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_manager_with_param(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_current_user_permissions_only_anonymous(self):
+        pass
+
 
 class AssetVersionApiTests(test_api_assets.AssetVersionApiTests):
     URL_NAMESPACE = None
@@ -51,9 +104,42 @@ class AssetVersionApiTests(test_api_assets.AssetVersionApiTests):
 class AssetDetailApiTests(test_api_assets.AssetDetailApiTests):
     URL_NAMESPACE = None
 
-    @unittest.skip(reason='`assignable_permissions` property only exists in '
-                          'v2 endpoint')
+    @unittest.skip(
+        reason='`assignable_permissions` property only exists in v2 endpoint'
+    )
     def test_assignable_permissions(self):
+        pass
+
+    @unittest.skip(reason='`project_ownership` property only exists in v2 endpoint')
+    def test_ownership_transfer_status(self):
+        pass
+
+    @unittest.skip(reason='`last_modified_by` property only exists in v2 endpoint')
+    def test_cannot_modified_last_modified_by(self):
+        pass
+
+    @unittest.skip(reason='`last_modified_by` property only exists in v2 endpoint')
+    def test_last_modified_by_is_modified(self):
+        pass
+
+    @unittest.skip(reason='`analysis_form_json` property only exists in v2 endpoint')
+    def test_analysis_form_json_with_nlp_actions(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_detail_permissions_visibility(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_detail_permissions_visibility_owner(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_detail_permissions_visibility_view_only(self):
+        pass
+
+    @unittest.skip(reason='deprecated version, only works with v2 endpoint')
+    def test_detail_permissions_visibility_manager(self):
         pass
 
 
@@ -66,10 +152,11 @@ class AssetsXmlExportApiTests(KpiTestCase):
                    'survey': [{'label': 'Q1 Label.', 'type': 'decimal'}]}
         self.login('someuser', 'someuser')
         asset = self.create_asset(asset_title, json.dumps(content), format='json')
-        response = self.client.get(reverse('asset-detail',
-                                           kwargs={'uid': asset.uid, 'format': 'xml'}))
+        response = self.client.get(
+            reverse('asset-detail', kwargs={'uid_asset': asset.uid, 'format': 'xml'})
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        xml = etree.fromstring(response.content)
+        xml = check_lxml_fromstring(response.content)
         title_elts = xml.xpath('./*[local-name()="head"]/*[local-name()="title"]')
         self.assertEqual(len(title_elts), 1)
         self.assertEqual(title_elts[0].text, asset_title)
@@ -80,10 +167,11 @@ class AssetsXmlExportApiTests(KpiTestCase):
                    'survey': [{'label': 'Q1 Label.', 'type': 'decimal'}]}
         self.login('someuser', 'someuser')
         asset = self.create_asset(asset_name, json.dumps(content), format='json')
-        response = self.client.get(reverse('asset-detail',
-                                           kwargs={'uid': asset.uid, 'format': 'xml'}))
+        response = self.client.get(
+            reverse('asset-detail', kwargs={'uid_asset': asset.uid, 'format': 'xml'})
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        xml = etree.fromstring(response.content)
+        xml = check_lxml_fromstring(response.content)
         title_elts = xml.xpath('./*[local-name()="head"]/*[local-name()="title"]')
         self.assertEqual(len(title_elts), 1)
         self.assertEqual(title_elts[0].text, asset_name)
@@ -93,33 +181,40 @@ class AssetsXmlExportApiTests(KpiTestCase):
                    'survey': [{'label': 'Q1 Label.', 'type': 'decimal'}]}
         self.login('someuser', 'someuser')
         asset = self.create_asset('', json.dumps(content), format='json')
-        response = self.client.get(reverse('asset-detail',
-                                           kwargs={'uid': asset.uid, 'format': 'xml'}))
+        response = self.client.get(
+            reverse('asset-detail', kwargs={'uid_asset': asset.uid, 'format': 'xml'})
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        xml = etree.fromstring(response.content)
+        xml = check_lxml_fromstring(response.content)
         title_elts = xml.xpath('./*[local-name()="head"]/*[local-name()="title"]')
         self.assertEqual(len(title_elts), 1)
         self.assertNotEqual(title_elts[0].text, '')
 
     def test_xml_export_group(self):
-        example_formbuilder_output = {'survey': [{"type": "begin_group",
-                                                  "relevant": "",
-                                                  "appearance": "",
-                                                  "name": "group_hl3hw45",
-                                                  "label": "Group 1 Label"},
-                                                 {"required": "true",
-                                                  "type": "decimal",
-                                                  "label": "Question 1 Label"},
-                                                 {"type": "end_group"}],
-                                      "settings": [{"form_title": "",
-                                                    "form_id": "group_form"}]}
+        example_formbuilder_output = {
+            'survey': [
+                {
+                    'type': 'begin_group',
+                    'relevant': '',
+                    'appearance': '',
+                    'name': 'group_hl3hw45',
+                    'label': 'Group 1 Label',
+                },
+                {'required': 'true', 'type': 'decimal', 'label': 'Question 1 Label'},
+                {'type': 'end_group'},
+            ],
+            'settings': [{'form_title': '', 'form_id': 'group_form'}],
+        }
 
         self.login('someuser', 'someuser')
-        asset = self.create_asset('', json.dumps(example_formbuilder_output), format='json')
-        response = self.client.get(reverse('asset-detail',
-                                           kwargs={'uid': asset.uid, 'format': 'xml'}))
+        asset = self.create_asset(
+            '', json.dumps(example_formbuilder_output), format='json'
+        )
+        response = self.client.get(
+            reverse('asset-detail', kwargs={'uid_asset': asset.uid, 'format': 'xml'})
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        xml = etree.fromstring(response.content)
+        xml = check_lxml_fromstring(response.content)
         group_elts = xml.xpath('./*[local-name()="body"]/*[local-name()="group"]')
         self.assertEqual(len(group_elts), 1)
         self.assertNotIn('relevant', group_elts[0].attrib)
@@ -131,9 +226,11 @@ class ObjectRelationshipsTests(BaseTestCase):
     def setUp(self):
         self.client.login(username='someuser', password='someuser')
         self.user = User.objects.get(username='someuser')
-        self.surv = Asset.objects.create(content={'survey': [{"type": "text", "name": "q1"}]},
-                                         owner=self.user,
-                                         asset_type='survey')
+        self.surv = Asset.objects.create(
+            content={'survey': [{'type': 'text', 'name': 'q1'}]},
+            owner=self.user,
+            asset_type='survey',
+        )
         self.coll = Asset.objects.create(
             asset_type=ASSET_TYPE_COLLECTION, name='sample collection',
             owner=self.user
@@ -156,28 +253,23 @@ class ObjectRelationshipsTests(BaseTestCase):
             the asset is now listed in the collection's list of assets.
         """
         _ = self.client.get(reverse('asset-detail', args=[self.surv.uid]))
-        coll_req1 = self.client.get(
-            reverse("asset-detail", args=[self.coll.uid])
+        coll_req1 = self.client.get(reverse('asset-detail', args=[self.coll.uid]))
+        self.assertEqual(
+            self._count_children_by_kind(coll_req1.data['children'], self.surv.kind), 0
         )
-        self.assertEqual(self._count_children_by_kind(
-            coll_req1.data['children'], self.surv.kind), 0)
 
         self.surv.parent = self.coll
         self.surv.save()
 
-        surv_req2 = self.client.get(
-            reverse("asset-detail", args=[self.surv.uid])
-        )
-        self.assertIn("parent", surv_req2.data)
-        self.assertIn(self.coll.uid, surv_req2.data["parent"])
+        surv_req2 = self.client.get(reverse('asset-detail', args=[self.surv.uid]))
+        self.assertIn('parent', surv_req2.data)
+        self.assertIn(self.coll.uid, surv_req2.data['parent'])
 
-        coll_req2 = self.client.get(
-            reverse("asset-detail", args=[self.coll.uid])
-        )
-        self.assertEqual(self._count_children_by_kind(
-            coll_req2.data['children'], self.surv.kind), 1)
+        coll_req2 = self.client.get(reverse('asset-detail', args=[self.coll.uid]))
         self.assertEqual(
-            self.surv.uid, coll_req2.data['children']['results'][0]['uid'])
+            self._count_children_by_kind(coll_req2.data['children'], self.surv.kind), 1
+        )
+        self.assertEqual(self.surv.uid, coll_req2.data['children']['results'][0]['uid'])
 
     def test_add_asset_to_collection(self):
         """
@@ -189,7 +281,7 @@ class ObjectRelationshipsTests(BaseTestCase):
         surv_url = reverse('asset-detail', args=[self.surv.uid])
         patch_req = self.client.patch(
             surv_url,
-            data={"parent": reverse("asset-detail", args=[self.coll.uid])},
+            data={'parent': reverse('asset-detail', args=[self.coll.uid])},
         )
         self.assertEqual(patch_req.status_code, status.HTTP_200_OK)
         req = self.client.get(surv_url)
@@ -207,7 +299,7 @@ class ObjectRelationshipsTests(BaseTestCase):
         surv_url = reverse('asset-detail', args=[self.surv.uid])
         patch_req = self.client.patch(
             surv_url,
-            data={"parent": reverse("asset-detail", args=[self.coll.uid])},
+            data={'parent': reverse('asset-detail', args=[self.coll.uid])},
         )
         self.assertEqual(patch_req.status_code, status.HTTP_200_OK)
         req = self.client.get(surv_url)
@@ -256,7 +348,7 @@ class AssetExportTaskTest(BaseTestCase):
         self.client.login(username='someuser', password='someuser')
         self.user = User.objects.get(username='someuser')
         self.asset = Asset.objects.create(
-            content={'survey': [{"type": "text", "name": "q1"}]},
+            content={'survey': [{'type': 'text', 'label': 'q1', 'name': 'q1'}]},
             owner=self.user,
             asset_type='survey',
             name='тєѕт αѕѕєт'
@@ -264,21 +356,25 @@ class AssetExportTaskTest(BaseTestCase):
         self.asset.deploy(backend='mock', active=True)
         self.asset.save()
         v_uid = self.asset.latest_deployed_version.uid
-        submission = {
+        self.submission = {
             '__version__': v_uid,
-            'q1': '¿Qué tal?'
+            'q1': '¿Qué tal?',
+            '_submission_time': '2024-08-07T23:42:21',
         }
-        self.asset.deployment.mock_submissions([submission])
+        self.asset.deployment.mock_submissions(
+            [self.submission],
+        )
 
     def test_owner_can_create_export(self):
-        post_url = reverse('exporttask-list')
-        asset_url = reverse('asset-detail', args=[self.asset.uid])
+        post_url = reverse('submissionexporttask-list')
+        asset_url = reverse('asset-detail', kwargs={'uid_asset': self.asset.uid})
         task_data = {
             'source': asset_url,
             'type': 'csv',
         }
-        # Create the export task
-        response = self.client.post(post_url, task_data)
+        with immediate_on_commit():
+            # Create the export task
+            response = self.client.post(post_url, task_data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         # Task should complete right away due to `CELERY_TASK_ALWAYS_EAGER`
         detail_response = self.client.get(response.data['url'])
@@ -290,11 +386,12 @@ class AssetExportTaskTest(BaseTestCase):
         result_content = result_response.getvalue().decode('utf-8')
         self.assertEqual(result_response.status_code, status.HTTP_200_OK)
         version_uid = self.asset.latest_deployed_version_uid
-        expected_content = ''.join([
-            '"q1";"_id";"_uuid";"_submission_time";"_validation_status";"_notes";"_status";"_submitted_by";"__version__";"_tags";"_index"\r\n',
-            f'"¿Qué tal?";"1";"";"";"";"";"";"";"{version_uid}";"";"1"\r\n',
-        ])
-
+        expected_content = ''.join(
+            [
+                '"q1";"_id";"_uuid";"_submission_time";"_validation_status";"_notes";"_status";"_submitted_by";"__version__";"_tags";"meta/rootUuid";"_index"\r\n',  # noqa: E501
+                f'"¿Qué tal?";"{self.submission["_id"]}";"{self.submission["_uuid"]}";"2024-08-07T23:42:21";"";"";"submitted_via_web";"someuser";"{version_uid}";"";"uuid:{self.submission["_uuid"]}";"1"\r\n',  # noqa: E501
+            ]
+        )
         self.assertEqual(result_content, expected_content)
         return detail_response
 
@@ -337,14 +434,15 @@ class AssetExportTaskTest(BaseTestCase):
                 "inline; filename*=utf-8''", ''
             )
         )
-        file_path = export_upload_to(self, file_name)
+        export = SubmissionExportTask.objects.get(uid=detail_response.data['uid'])
+        file_path = export_upload_to(export, file_name)
 
-        detail_url = reverse('exporttask-detail', kwargs={
+        detail_url = reverse('submissionexporttask-detail', kwargs={
             'uid': detail_response.data['uid']
             })
 
         # checking if file exists before attempting to delete
-        file_exists_before_delete = ExportTask.result.field.storage.exists(
+        file_exists_before_delete = SubmissionExportTask.result.field.storage.exists(
             name=file_path
         )
         assert file_exists_before_delete
@@ -354,7 +452,7 @@ class AssetExportTaskTest(BaseTestCase):
         assert delete_response.status_code == status.HTTP_204_NO_CONTENT
 
         # checking if file still exists after attempting to delete it
-        file_exists_after_delete = ExportTask.result.field.storage.exists(
+        file_exists_after_delete = SubmissionExportTask.result.field.storage.exists(
             name=file_path
         )
         assert not file_exists_after_delete

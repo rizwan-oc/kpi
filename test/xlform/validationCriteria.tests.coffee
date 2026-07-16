@@ -208,6 +208,7 @@ do ->
         survey = new $model.Survey()
         survey.rows.add(type: qtype, name: 'q', label: 'Q')
         expect(survey.rows.at(0).get('constraint')).toBeDefined()
+      return
 
   ###############################################################
   # Validation criteria round-trip: CSV load → export

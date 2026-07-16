@@ -1,0 +1,284 @@
+from datetime import timedelta
+from math import inf
+
+from constance import config
+from django.conf import settings
+from django.db.models import Q, QuerySet
+from django.utils import timezone
+
+from hub.models import V1UserTracker
+from kobo.apps.kobo_auth.shortcuts import User
+from kobo.apps.openrosa.apps.logger.models import Instance
+from kobo.apps.organizations.constants import UsageType
+from kobo.apps.organizations.models import Organization
+from kobo.apps.stripe.utils.subscription_limits import (
+    get_organizations_effective_limits,
+)
+from kpi.models import Asset
+from kpi.utils.usage_calculator import (
+    get_nlp_usage_for_current_billing_period_by_user_id,
+    get_storage_usage_by_user_id,
+    get_submissions_for_current_billing_period_by_user_id,
+)
+
+
+def get_active_users(days: int = 365) -> QuerySet:
+    """
+    Retrieve users who have been active within specified number of days.
+
+    A user is considered active if:
+    - They have logged in or were recently created
+    - An asset they own has been modified or created
+    - An asset they own has had submissions
+    - They have submitted data to any asset
+
+    :param days: int: Threshold number of days (default: 365 days)
+
+    :return: A queryset of users
+    """
+
+    days = days or 365
+    inactivity_threshold = timezone.now() - timedelta(days=days)
+    recent_login_filter = Q(last_login__gt=inactivity_threshold) | (
+        Q(last_login__isnull=True) & Q(date_joined__gt=inactivity_threshold)
+    )
+    active_users = get_users_with_recent_activity(days=days)
+    return User.objects.filter(recent_login_filter | Q(id__in=active_users)).exclude(
+        pk=settings.ANONYMOUS_USER_ID
+    )
+
+
+def get_inactive_users(days: int = 365) -> QuerySet:
+    """
+    Retrieve users who have been inactive for a specified number of days.
+
+    A user is considered inactive if:
+    - They have not logged in within the given period (or never logged in).
+    - They have not modified or created an asset within the given period.
+    - No asset they own has had new or modified submissions within the given period.
+    - They have not submitted data to any asset within the given period.
+
+    Note: Users created within the given period who never logged in are not
+    considered inactive.
+
+    :param days: int: Number of days to determine inactivity (default: 365 days)
+
+    :return: A queryset of inactive users
+    """
+    inactivity_threshold = timezone.now() - timedelta(days=days)
+    inactive_users = User.objects.filter(
+        Q(last_login__lt=inactivity_threshold)
+        | (Q(last_login__isnull=True) & Q(date_joined__lt=inactivity_threshold))
+    )
+    active_user_ids = get_users_with_recent_activity(days=days)
+    trashed_user_ids = get_users_inactive_or_in_trash()
+    excluded_users = active_user_ids | trashed_user_ids
+    return inactive_users.exclude(
+        Q(id__in=excluded_users) | Q(username='AnonymousUser')
+    )
+
+
+def get_users_inactive_or_in_trash() -> set[int]:
+    results = User.objects.filter(
+        Q(is_active=False) | Q(trash__isnull=False)
+    ).values_list('pk', flat=True)
+    return set(results)
+
+
+def get_users_with_recent_activity(days: int = 365) -> set[int]:
+    """
+    Retrieve ids of users with recent activity.
+
+    Recent activity includes:
+    - An asset they owned being modified
+    - An asset they own having submissions added or modified
+    - Submitting data to any asset
+
+    :param days: int: Number of days to determine inactivity (default: 365 days)
+
+    :return: A set of user ids
+    """
+    # Find created/modified assets
+    inactivity_threshold = timezone.now() - timedelta(days=days)
+    active_asset_owners = Asset.objects.filter(
+        Q(date_modified__gt=inactivity_threshold)
+        | Q(date_created__gt=inactivity_threshold)
+    ).values_list('owner_id', flat=True)
+
+    # Find users whose projects have active submissions within the given period
+    active_submission_owners = Instance.objects.filter(
+        Q(date_modified__gt=inactivity_threshold)
+        | Q(date_created__gt=inactivity_threshold)
+    ).values_list('xform__user_id', flat=True)
+
+    # Find users who have submitted data within the given period
+    active_submitters = Instance.objects.filter(
+        Q(date_modified__gt=inactivity_threshold)
+        | Q(date_created__gt=inactivity_threshold),
+        user__isnull=False,
+    ).values_list('user_id', flat=True)
+
+    return (
+        set(active_asset_owners)
+        | set(active_submission_owners)
+        | set(active_submitters)
+    )
+
+
+def get_users_within_range_of_usage_limit(
+    usage_types: list[UsageType], minimum: float = 0, maximum: float = inf
+) -> QuerySet:
+    """
+    Returns all users whose usage is between minimum and maximum percent
+    of their plan limit for any of the given usage types.
+
+    :param usage_types: list[UsageType].
+    :param minimum: float. Minimum usage, eg 0.9 for 90% of the limit. Default 0
+    :param maximum: float. Maximum usage, eg 1 for 100% of the limit. Default inf
+    """
+    if not settings.STRIPE_ENABLED:
+        return User.objects.none()
+
+    cached_nlp_usage = {}
+
+    # cheat so that we don't fetch information twice if we're looking for nlp usage
+    def get_nlp_usage_method(nlp_usage_type):
+        def get_nlp_usage():
+            if cached_nlp_usage == {}:
+                cached_nlp_usage.update(
+                    get_nlp_usage_for_current_billing_period_by_user_id()
+                )
+            return {
+                userid: usages[nlp_usage_type]
+                for userid, usages in cached_nlp_usage.items()
+            }
+
+        return get_nlp_usage
+
+    usage_method_by_type = {
+        UsageType.SUBMISSION: get_submissions_for_current_billing_period_by_user_id,
+        UsageType.STORAGE_BYTES: get_storage_usage_by_user_id,
+        UsageType.ASR_SECONDS: get_nlp_usage_method(UsageType.ASR_SECONDS),
+        UsageType.MT_CHARACTERS: get_nlp_usage_method(UsageType.MT_CHARACTERS),
+    }
+
+    minimum = minimum or 0
+    maximum = maximum or inf
+    include_storage_addons = UsageType.STORAGE_BYTES in usage_types
+    include_onetime_addons = (
+        UsageType.SUBMISSION in usage_types
+        or UsageType.ASR_SECONDS in usage_types
+        or UsageType.MT_CHARACTERS in usage_types
+    )
+    org_ids_with_no_owner = list(
+        Organization.objects.filter(owner__isnull=True).values_list('pk', flat=True)
+    )
+    limits_by_org = get_organizations_effective_limits(
+        include_storage_addons=include_storage_addons,
+        include_onetime_addons=include_onetime_addons,
+    )
+
+    # filter out any organization with no owner
+    limits_by_org = {
+        org_id: limits
+        for org_id, limits in limits_by_org.items()
+        if org_id not in org_ids_with_no_owner
+    }
+
+    owner_by_org = {
+        org.id: org.owner_user_object.pk
+        for org in Organization.objects.filter(owner__isnull=False)
+    }
+    limits_by_owner = {
+        owner_by_org[org_id]: limits for org_id, limits in limits_by_org.items()
+    }
+    user_ids = set()
+
+    for usage_type in usage_types:
+        usage_by_user = usage_method_by_type[usage_type]()
+        for user_id, usage in usage_by_user.items():
+            limit = limits_by_owner.get(user_id, {}).get(f'{usage_type}_limit', inf)
+            if minimum * limit <= usage < maximum * limit:
+                user_ids.add(user_id)
+
+    inactive_users = get_users_inactive_or_in_trash()
+
+    return User.objects.filter(id__in=user_ids).exclude(id__in=inactive_users)
+
+
+def get_users_over_80_percent_of_storage_limit() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.STORAGE_BYTES], minimum=0.8, maximum=0.9
+    )
+
+
+def get_users_over_90_percent_of_storage_limit() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.STORAGE_BYTES], minimum=0.9, maximum=1
+    )
+
+
+def get_users_over_100_percent_of_storage_limit() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.STORAGE_BYTES], minimum=1
+    )
+
+
+def get_users_over_80_percent_of_submission_limit() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.SUBMISSION], minimum=0.8, maximum=0.9
+    )
+
+
+def get_users_over_90_percent_of_submission_limit() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.SUBMISSION], minimum=0.9, maximum=1
+    )
+
+
+def get_users_over_100_percent_of_submission_limit() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.SUBMISSION], minimum=1
+    )
+
+
+def get_users_over_80_percent_of_nlp_limits() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.MT_CHARACTERS, UsageType.ASR_SECONDS],
+        minimum=0.8,
+        maximum=0.9,
+    )
+
+
+def get_users_over_90_percent_of_nlp_limits() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.MT_CHARACTERS, UsageType.ASR_SECONDS],
+        minimum=0.9,
+        maximum=1,
+    )
+
+
+def get_users_over_100_percent_of_nlp_limits() -> QuerySet:
+    return get_users_within_range_of_usage_limit(
+        usage_types=[UsageType.MT_CHARACTERS, UsageType.ASR_SECONDS], minimum=1
+    )
+
+
+def get_all_test_users() -> QuerySet:
+    # for testing only
+    test_emails = config.MASS_EMAIL_TEST_EMAILS.split('\n')
+    # remove empty strings
+    test_emails = [email for email in test_emails if len(email) > 0]
+    return User.objects.filter(email__in=test_emails)
+
+
+def get_users_who_are_accessing_v1_endpoints() -> QuerySet:
+    """
+    Retrieve users who have accessed v1 endpoints within a specified number of days
+    """
+    v1_user_ids = V1UserTracker.objects.values_list('user_id', flat=True)
+
+    excluded_users = get_users_inactive_or_in_trash()
+    return User.objects.filter(id__in=v1_user_ids).exclude(
+        Q(id__in=excluded_users) | Q(pk=settings.ANONYMOUS_USER_ID)
+    )

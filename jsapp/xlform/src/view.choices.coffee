@@ -14,6 +14,7 @@ module.exports = do ->
       $($.parseHTML $viewTemplates.row.selectQuestionExpansion()).insertAfter @rowView.$('.card__header')
       @$el = @rowView.$(".list-view")
       @ulClasses = @$("ul").prop("className")
+      return
 
     render: (isSortableDisabled) ->
       cardText = @rowView.$el.find('.card__text')
@@ -49,7 +50,7 @@ module.exports = do ->
               if @hasReordered
                 @reordered()
                 @model.getSurvey()?.trigger('change')
-              true
+              return true
             change: => @hasReordered = true
           })
 
@@ -62,6 +63,7 @@ module.exports = do ->
         setTimeout =>
           @ul.find('li').last().find('.editable-wrapper').trigger('click')
         , 1
+        return
       )
 
       @$el.append(btn)
@@ -74,6 +76,7 @@ module.exports = do ->
       lis = @ul.find('li')
       if lis.length == 2
         lis.find('.js-remove-option').removeClass('hidden')
+      return
 
     reordered: (evt, ui)->
       ids = []
@@ -81,11 +84,13 @@ module.exports = do ->
         lid = $(li).data("optionId")
         if lid
           ids.push lid
+        return
       for id, n in ids
         @model.options.get(id).set("order", n, silent: true)
       @model.options.comparator = "order"
       @model.options.sort()
       @hasReordered = false
+      return
 
   class OptionView extends $baseView
     tagName: "li"
@@ -114,9 +119,9 @@ module.exports = do ->
     render: ->
       @t = $("<i class=\"k-icon k-icon-trash js-remove-option\">")
       @pw = $("<div class=\"editable-wrapper js-option-label-input js-cancel-select-row\">")
-      @p = $("<input placeholder=\"#{t("This option has no name")}\" class=\"js-cancel-select-row option-view-input\"  data-cy=\"option\">")
-      @c = $("<code><label>#{t("Value:")}</label> <input type=\"text\" class=\"js-option-name-input js-cancel-select-row\"></input></code>")
-      @i = $("<code><label>#{t("Image:")}</label> <input type=\"text\" class=\"js-option-image-input js-cancel-select-row\"></input></code>")
+      @p = $("<input placeholder=\"#{t("No value")}\" class=\"js-cancel-select-row option-view-input\" dir=\"auto\">")
+      @c = $("<code><input type=\"text\" class=\"js-option-name-input js-cancel-select-row\"></input></code>")
+      @i = $("<code><input type=\"text\" class=\"js-option-image-input js-cancel-select-row\"></input></code>")
       @d = $('<div>')
       @optionImageField = 'image'
       if @model
@@ -133,6 +138,7 @@ module.exports = do ->
       @p.change ((input)->
         nval = input.currentTarget.value
         @saveValue(nval)
+        return
       ).bind @
 
       @n = $('input', @c)
@@ -190,6 +196,7 @@ module.exports = do ->
       @pw.on 'click', (event) =>
         if !@p.is(':hidden') && event.target != @p[0]
           @p.click()
+        return
 
       @j = $('input', @i)
       @j.change ((input)->
@@ -221,7 +228,7 @@ module.exports = do ->
       @d.append(@c)
       @d.append(@i)
       @$el.html(@d)
-      @
+      return @
     keyupinput: (evt)->
       ifield = @$("input.inplace_field")
       if evt.keyCode is 8 and ifield.hasClass("empty")
@@ -231,6 +238,7 @@ module.exports = do ->
         ifield.addClass("empty")
       else
         ifield.removeClass("empty")
+      return
 
     keydowninput: (evt) ->
       if evt.keyCode is 13
@@ -244,6 +252,7 @@ module.exports = do ->
           $(this.el).parent().siblings().find('div.editable-wrapper').eq(0).focus()
 
         localOptionView.eq(index).select()
+      return
 
     remove: ()->
       $parent = @$el.parent()
@@ -256,6 +265,7 @@ module.exports = do ->
       lis = $parent.find('li')
       if lis.length == 1
         lis.find('.js-remove-option').addClass('hidden')
+      return
 
     saveValue: (nval)->
       # if new value has no non-space characters, it is invalid
@@ -282,6 +292,9 @@ module.exports = do ->
         return
       else
         return newValue: @model.get "label"
+      return
 
-  ListView: ListView
-  OptionView: OptionView
+  return {
+    ListView: ListView
+    OptionView: OptionView
+  }

@@ -1,58 +1,44 @@
-# coding: utf-8
-from rest_framework import (
-    renderers,
-    viewsets,
-)
-from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework import viewsets
 from rest_framework.response import Response
 
+from kpi.permissions import IsAuthenticated
+from kpi.schema_extensions.v2.service_usage.serializers import ServiceUsageResponse
 from kpi.serializers.v2.service_usage import ServiceUsageSerializer
 from kpi.utils.object_permission import get_database_user
+from kpi.utils.schema_extensions.markdown import read_md
+from kpi.utils.schema_extensions.response import open_api_200_ok_response
 
 
-class ServiceUsageViewSet(viewsets.ViewSet):
-    """
-    ## Service Usage Tracker
-    Tracks the submissions for the current month
-    Tracks the current total storage used
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/service_usage/
-    </pre>
-
-    > Example
-    >
-    >       curl -X GET https://[kpi]/api/v2/service_usage/
-    >       {
-    >           "total_nlp_asr_seconds": {integer},
-    >           "total_nlp_mt_characters": {integer},
-    >           "total_storage_bytes": {integer},
-    >           "total_submission_count_current_month": {integer},
-    >           "total_submission_count_all_time": {integer},
-    >       }
-
-
-    ### CURRENT ENDPOINT
-    """
-    renderer_classes = (
-        renderers.BrowsableAPIRenderer,
-        renderers.JSONRenderer,
+@extend_schema(tags=['User / team / organization / usage'])
+@extend_schema_view(
+    list=extend_schema(
+        description=read_md('kpi', 'service_usage/list.md'),
+        responses=open_api_200_ok_response(
+            ServiceUsageResponse,
+            raise_access_forbidden=False,
+            raise_not_found=False,
+            validate_payload=False,
+        ),
     )
+)
+class ServiceUsageViewSet(viewsets.GenericViewSet):
+    """
+    Viewset for managing the service usage of current user
+
+    Available actions:
+    - list    → GET /api/v2/service_usage/
+
+    Documentation:
+    - docs/api/v2/service_usage/list.md
+    """
+
     pagination_class = None
     permission_classes = (IsAuthenticated,)
-
-    def get_serializer_context(self):
-        """
-        Extra context provided to the serializer class.
-        """
-        return {
-            'request': self.request,
-            'format': self.format_kwarg,
-            'view': self
-        }
 
     def list(self, request, *args, **kwargs):
         serializer = ServiceUsageSerializer(
             get_database_user(request.user),
             context=self.get_serializer_context(),
         )
-        return Response(serializer.data)
+        return Response(data=serializer.data)

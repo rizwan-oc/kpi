@@ -1,3 +1,22 @@
+@use 'scss/z-indexes';
+
+@use '../partials/form_builder/common';
+
+@use '../partials/form_builder/survey_row';
+@use '../partials/form_builder/row_questiontypes';
+@use '../partials/form_builder/card';
+@use '../partials/form_builder/card_settings';
+@use '../partials/form_builder/card_multichoice';
+@use '../partials/form_builder/group';
+@use '../partials/form_builder/settings_skiplogic';
+@use '../partials/form_builder/params_view';
+@use '../partials/form_builder/mandatory_setting';
+@use '../partials/form_builder/default_value';
+@use '../partials/form_builder/calculation';
+@use '../partials/form_builder/repeat_count';
+@use '../partials/form_builder/appearance';
+@use '../partials/form_builder/misc';
+
 // All variables are now in kobo.scss
 
 // ==========================================================================
@@ -13,18 +32,32 @@
 //   .menu-row                        ->  .questiontypelist__row
 //   .menu-item                       ->  .questiontypelist__item
 
-@import "../partials/form_builder/common";
+/*
+This was previously a mix of few other legacy selectors:
+- ui-panel
+- ui-panel--fixed
+- ui-panel--transparent
+- ui-panel__body
+Due to the fact that it was some very ancient code, and to avoid going too deep
+into understanding it, I simply gathered the sum of the styles below:
+*/
+.form-builder-wrapper {
+  z-index: z-indexes.$z-form-builder-wrapper;
+  height: 100%;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  display: flex;
+  flex-flow: column wrap;
+  margin: 0 auto;
+  align-items: stretch;
 
-@import "../partials/form_builder/survey_row";
-@import "../partials/form_builder/row_questiontypes";
-@import "../partials/form_builder/card";
-@import "../partials/form_builder/card_settings";
-@import "../partials/form_builder/card_multichoice";
-@import "../partials/form_builder/group";
-@import "../partials/form_builder/settings_skiplogic";
-@import "../partials/form_builder/params_view";
-@import "../partials/form_builder/mandatory_setting";
-@import "../partials/form_builder/default_value";
-@import "../partials/form_builder/calculation";
-@import "../partials/form_builder/repeat_count";
-@import "../partials/form_builder/misc";
+  > .form-builder {
+    box-sizing: border-box;
+    flex-flow: column;
+    margin: 0 !important;
+    height: 100%;
+  }
+}

@@ -1,0 +1,138 @@
+import prettyBytes from 'pretty-bytes'
+import { useCallback } from 'react'
+import {
+  type BaseProduct,
+  type Checkout,
+  type LimitAmount,
+  Limits,
+  type Price,
+  type Product,
+  SubscriptionChangeType,
+  type SubscriptionInfo,
+  USAGE_TYPE,
+} from '#/account/stripe.types'
+import { convertUnixTimestampToUtc, notify } from '#/utils'
+
+export function isOneTimeAddonProduct(product: Product) {
+  return product.metadata?.product_type === 'addon_onetime'
+}
+
+export function isRecurringAddonProduct(product: Product) {
+  return product.metadata?.product_type === 'addon'
+}
+
+export function isAddonProduct(product: Product) {
+  return isOneTimeAddonProduct(product) || isRecurringAddonProduct(product)
+}
+
+export function processCheckoutResponse(data: Checkout) {
+  if (data?.url) {
+    window.location.assign(data.url)
+  } else {
+    notify.error(t('There has been an issue, please try again later.'), {
+      duration: 10000,
+    })
+  }
+}
+
+/**
+ * Check if any of a list of subscriptions are scheduled to change to a given price at some point.
+ */
+export function isChangeScheduled(price: Price, subscriptions: SubscriptionInfo[] | null) {
+  return (
+    !subscriptions ||
+    subscriptions.some((subscription) =>
+      subscription.schedule?.phases?.some((phase) => phase.items.some((item) => item.price === price.id)),
+    )
+  )
+}
+
+export const getSubscriptionsForProductId = (productId: String, subscriptions: SubscriptionInfo[] | null) => {
+  if (subscriptions) {
+    return subscriptions.filter(
+      (subscription: SubscriptionInfo) => subscription.items[0].price.product.id === productId,
+    )
+  }
+  return null
+}
+
+/*
+ * Performs logical operations to determine what information to provide about
+ * the upcoming status of user's subscription.
+ */
+export const getSubscriptionChangeDetails = (currentPlan: SubscriptionInfo | null, products: Product[]) => {
+  if (!(currentPlan && products.length)) {
+    return null
+  }
+  let nextProduct: BaseProduct | null = null
+  let date = ''
+  let type: SubscriptionChangeType = SubscriptionChangeType.NO_CHANGE
+  if (currentPlan.cancel_at) {
+    date = currentPlan.cancel_at
+    type = SubscriptionChangeType.CANCELLATION
+  } else if (
+    currentPlan.schedule &&
+    currentPlan.schedule.status === 'active' &&
+    currentPlan.schedule.phases?.length &&
+    currentPlan.schedule.phases.length > 1
+  ) {
+    const nextPhaseItem = currentPlan.schedule.phases[1].items[0]
+    for (const product of products) {
+      const price = product.prices.find((price) => price.id === nextPhaseItem.price)
+      if (price) {
+        nextProduct = product
+        date = convertUnixTimestampToUtc(currentPlan.schedule.phases[0].end_date!)
+        if (nextProduct.id === currentPlan.items[0].price.product.id) {
+          type = SubscriptionChangeType.PRICE_CHANGE
+        } else {
+          type = SubscriptionChangeType.PRODUCT_CHANGE
+        }
+        break
+      }
+    }
+  } else if (currentPlan && type === SubscriptionChangeType.NO_CHANGE) {
+    date = currentPlan.current_period_end
+    type = SubscriptionChangeType.RENEWAL
+  }
+  return { nextProduct, date, type }
+}
+
+/**
+ * Tests whether a new price would cost less than the user's current subscription.
+ */
+export const isDowngrade = (currentSubscriptions: SubscriptionInfo[], newPrice: Price) => {
+  if (!currentSubscriptions.length) {
+    return false
+  }
+  const currentTotalPrice = currentSubscriptions[0].items[0].price.unit_amount
+  const newTotalPrice = newPrice.unit_amount
+  return currentTotalPrice > newTotalPrice
+}
+
+/**
+ * Render a limit amount, usage amount, or total balance as readable text
+ * @param {USAGE_TYPE} type - The limit/usage amount
+ * @param {number|'unlimited'} amount - The limit/usage amount
+ * @param {number|'unlimited'|null} [available=null] - If we're showing a balance,
+ * `amount` takes the usage amount and this takes the limit amount
+ */
+export const useLimitDisplay = () => {
+  const limitDisplay = useCallback((type: USAGE_TYPE, amount: LimitAmount, available: LimitAmount | null = null) => {
+    if (amount === Limits.unlimited || available === Limits.unlimited) {
+      return t('Unlimited')
+    }
+    const total = available ? available - amount : amount
+    switch (type) {
+      case USAGE_TYPE.STORAGE:
+        return prettyBytes(total)
+      case USAGE_TYPE.TRANSCRIPTION:
+        return t('##minutes## mins').replace(
+          '##minutes##',
+          typeof total === 'number' ? Math.floor(total).toLocaleString() : total,
+        )
+      default:
+        return total.toLocaleString()
+    }
+  }, [])
+  return { limitDisplay }
+}

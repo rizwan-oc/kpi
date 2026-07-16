@@ -1,17 +1,16 @@
-# coding: utf-8
-# 😬
 import copy
 import traceback
 
-from django.db import models
+from django.conf import settings
 from django.conf import settings as django_settings
-from rest_framework.reverse import reverse
-
+from django.db import models
 from formpack import FormPack
 from bs4 import BeautifulSoup
 from pyxform import builder, xls2json
 from pyxform.errors import PyXFormError
 
+from kobo.apps.openrosa.apps.logger.xform_instance_parser import add_uuid_prefix
+from kpi.constants import API_NAMESPACES
 from kpi.fields import KpiUidField
 from kpi.interfaces.open_rosa import OpenRosaFormListInterface
 from kpi.mixins import (
@@ -23,6 +22,7 @@ from kpi.utils.hash import calculate_hash
 from kpi.utils.log import logging
 from kpi.utils.models import DjangoModelABCMetaclass
 from kpi.utils.pyxform_compatibility import allow_choice_duplicates
+from kpi.utils.urls import versioned_reverse
 
 
 class AbstractFormList(
@@ -61,20 +61,14 @@ class AssetSnapshot(
     """
     This model serves as a cache of the XML that was exported by the installed
     version of pyxform.
-
-    TODO: come up with a policy to clear this cache out.
-    DO NOT: depend on these snapshots existing for more than a day
-    until a policy is set.
-    Done with https://github.com/kobotoolbox/kpi/pull/2434.
-    Remove above lines when PR is merged
     """
     xml = models.TextField()
     source = models.JSONField(default=dict)
     details = models.JSONField(default=dict)
-    owner = models.ForeignKey('auth.User', related_name='asset_snapshots',
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='asset_snapshots',
                               null=True, on_delete=models.CASCADE)
     asset = models.ForeignKey('Asset', null=True, on_delete=models.CASCADE)
-    submission_uuid = models.CharField(null=True, max_length=41)
+    submission_uuid = models.CharField(null=True, max_length=249)
     _reversion_version_id = models.IntegerField(null=True)
     asset_version = models.ForeignKey(
         'AssetVersion', on_delete=models.CASCADE, null=True
@@ -104,22 +98,25 @@ class AssetSnapshot(
         """
         Implements `OpenRosaFormListInterface.get_download_url()`
         """
-        return reverse(
-            viewname='assetsnapshot-detail',
+
+        return versioned_reverse(
+            viewname='assetsnapshot-xml-with-disclaimer',
             format='xml',
-            kwargs={'uid': self.uid},
-            request=request
+            kwargs={'uid_asset_snapshot': self.uid},
+            request=request,
+            url_namespace=API_NAMESPACES['default'],
         )
 
     def get_manifest_url(self, request):
         """
         Implements `OpenRosaFormListInterface.get_manifest_url()`
         """
-        return reverse(
-            viewname='assetsnapshot-manifest',
-            format='xml',
-            kwargs={'uid': self.uid},
-            request=request
+
+        return versioned_reverse(
+            viewname='assetsnapshot-manifest-openrosa',
+            kwargs={'uid_asset_snapshot': self.uid},
+            request=request,
+            url_namespace=API_NAMESPACES['default'],
         )
 
     @property
@@ -173,15 +170,16 @@ class AssetSnapshot(
         )
         if self.submission_uuid:
             _xml = self.xml
-            rootUuid = self.submission_uuid.replace('uuid:', '')
+            rootUuid = add_uuid_prefix(self.submission_uuid)
             # this code would fit best within "generate_xml_from_source" method, where
             # additional XForm attributes are passed to formpack / pyxform at generation,
             # but the equivalent change can be done with string replacement
-            instance_id_path = f'/{id_string}/meta/instanceID'
             after_instanceid = '<rootUuid/>'
-            before_modelclose = '<bind calculate="\'' + rootUuid + '\'" ' + \
-                f'nodeset="/{id_string}/meta/rootUuid" ' + \
+            before_modelclose = (
+                f'<bind calculate="\'{rootUuid}\'" '
+                f'nodeset="/{id_string}/meta/rootUuid" '
                 'required="true()" type="string"/>'
+            )
 
             _xml = _xml.replace('<instanceID/>', f'<instanceID/>\n{after_instanceid}')
             _xml = _xml.replace('</model>', f'{before_modelclose}\n</model>')
@@ -315,12 +313,14 @@ class AssetSnapshot(
         if 'survey_header' not in content:
             content['survey_header'] = [{ col : "" for col in self.surveyCols}]
 
-    def generate_xml_from_source(self,
-                                 source,
-                                 include_note=False,
-                                 root_node_name=None,
-                                 form_title=None,
-                                 id_string=None):
+    def generate_xml_from_source(
+        self,
+        source,
+        include_note=False,
+        root_node_name=None,
+        form_title=None,
+        id_string=None,
+    ):
 
         if not root_node_name:
             if self.asset and self.asset.uid:
@@ -365,10 +365,12 @@ class AssetSnapshot(
 
         # Step 1: try FormPack to generate XML
         try:
-            xml = FormPack({'content': source_copy},
-                           root_node_name=root_node_name,
-                           id_string=id_string,
-                           title=form_title)[0].to_xml(warnings=warnings)
+            xml = FormPack(
+                {'content': source_copy},
+                root_node_name=root_node_name,
+                id_string=id_string,
+                title=form_title,
+            )[0].to_xml(warnings=warnings)
         except PyXFormError as formpack_err:
             formpack_error = formpack_err
             # Step 2: FormPack failed; fall back to pyxform directly
@@ -386,7 +388,11 @@ class AssetSnapshot(
 
         # Step 3: update details based on whether generation succeeded or failed
         if generation_error:
-            err_message = str(generation_error)
+            # When the pyxform fallback also fails, FormPack's error is more
+            # user-friendly (e.g. it names the offending field). Prefer it.
+            err_message = (
+                str(formpack_error) if formpack_error else str(generation_error)
+            )
             logging.error('Failed to generate xform for asset', extra={
                 'src': source,
                 'id_string': id_string,
@@ -445,3 +451,18 @@ class AssetSnapshot(
             xml = str(soup)
 
         return xml, details
+
+    @property
+    def xform_root_node_name(self):
+        """
+        Retrieves the name of the XML tag representing the root node of the "survey"
+        in the XForm XML structure.
+
+        This method uses the `name` setting from the XLSForm to determine the tag name.
+        If no name is provided, it falls back to using the asset UID.
+        """
+
+        try:
+            return self.asset.content['settings']['name']
+        except KeyError:
+            return self.asset.uid

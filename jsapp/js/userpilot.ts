@@ -1,18 +1,18 @@
+import type { AccountResponse } from 'js/dataInterface'
 /**
  * UserPilot integration utility
  * Handles initialization and user identification for UserPilot SDK (npm package)
  */
-import {Userpilot} from 'userpilot';
-import {AccountResponse} from 'js/dataInterface';
+import { Userpilot } from 'userpilot'
 
 class UserPilotService {
-  private readonly userPilotSdkToken: string | null = null;
+  private readonly userPilotSdkToken: string | null = null
 
   constructor() {
-    const tokenEl = document.head.querySelector('meta[name=user_pilot_sdk_token]');
+    const tokenEl = document.head.querySelector('meta[name=user_pilot_sdk_token]')
     if (tokenEl && tokenEl instanceof HTMLMetaElement) {
-      this.userPilotSdkToken = tokenEl.content;
-      this.initialize();
+      this.userPilotSdkToken = tokenEl.content
+      this.initialize()
     }
   }
 
@@ -21,13 +21,13 @@ class UserPilotService {
    */
   private initialize(): void {
     if (!this.userPilotSdkToken) {
-      console.warn('[Userpilot] No SDK token found, Userpilot not initialized');
-      return;
+      console.warn('[Userpilot] No SDK token found, Userpilot not initialized')
+      return
     }
     try {
-      Userpilot.initialize(this.userPilotSdkToken);
+      Userpilot.initialize(this.userPilotSdkToken)
     } catch (error) {
-      console.error('[Userpilot] Error during initialization:', error);
+      console.error('[Userpilot] Error during initialization:', error)
     }
   }
 
@@ -37,23 +37,23 @@ class UserPilotService {
    */
   identify(accountResp: AccountResponse): void {
     if (!this.userPilotSdkToken) {
-      return;
+      return
     }
-    const userUuid = accountResp.user_uuid;
+    const userUuid = accountResp.user_uuid
     if (!userUuid) {
-      console.warn('[Userpilot] User UUID is not present. Skipping Identification');
-      return;
+      console.warn('[Userpilot] User UUID is not present. Skipping Identification')
+      return
     }
     const userProperties = {
       company: {
         id: accountResp.subdomain,
         name: accountResp.customer_name,
-      }
-    };
+      },
+    }
     try {
-      Userpilot.identify(userUuid, userProperties);
+      Userpilot.identify(userUuid, userProperties)
     } catch (error) {
-      console.warn('UserPilot identification failed:', error);
+      console.warn('UserPilot identification failed:', error)
     }
   }
 
@@ -62,15 +62,15 @@ class UserPilotService {
    */
   reload(url: string): void {
     if (!this.userPilotSdkToken) {
-      return;
+      return
     }
     try {
-      Userpilot.reload(url);
+      Userpilot.reload(url)
     } catch (error) {
-      console.warn('UserPilot reload failed:', error);
+      console.warn('UserPilot reload failed:', error)
     }
   }
 }
 
 // Export singleton instance
-export default new UserPilotService();
+export default new UserPilotService()

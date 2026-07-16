@@ -4,6 +4,7 @@ $baseView = require './view.pluggedIn.backboneView'
 $viewTemplates = require './view.templates'
 $icons = require './view.icons'
 $configs = require './model.configs'
+writeParameters = require('#/components/formBuilder/formBuilderUtils').writeParameters
 econsentSignature = require('../../js/components/formBuilder/econsentSignature')
 
 module.exports = do ->
@@ -31,6 +32,7 @@ module.exports = do ->
       $namer_form.find('button').on 'click', (evt) ->
         evt.preventDefault()
         $namer_form.submit()
+        return
       @$('input').eq(0).focus()
       return
 
@@ -52,17 +54,20 @@ module.exports = do ->
           # user presses the escape key
           if evt.which == 27
             @shrink()
+          return
       else
         $(window).on 'keydown.cancel_add_question',  (evt) =>
           # user presses the escape key
           if evt.which == 27
             evt.preventDefault()
             @$('input').eq(0).focus()
+          return
 
         $('body').on 'mousedown.cancel_add_question', (evt) =>
           if $(evt.target).closest('.line.expanded').length == 0
             evt.preventDefault()
             @$('input').eq(0).focus()
+          return
       return
 
     show_picker: (evt) ->
@@ -72,10 +77,13 @@ module.exports = do ->
       @line.html $viewTemplates.$$render('xlfRowSelector.line', "")
       @line.find('.row__questiontypes__new-question-name').val(@question_name)
       $menu = @line.find(".row__questiontypes__list")
+      availableFiles = @options.survey.availableFiles || []
       econsentIcon = null
       for mrow in $icons.grouped()
         menurow = $("<div>", class: "questiontypelist__row").appendTo $menu
         for mitem, i in mrow when mitem
+          if availableFiles.length is 0 and ['select_one_from_file', 'select_multiple_from_file'].includes(mitem.get('id'))
+            continue
           if mitem.get('id') is 'econsent_signature'
             econsentIcon = mitem
             continue
@@ -87,6 +95,7 @@ module.exports = do ->
 
       @scrollFormBuilder('+=220')
       @$('.questiontypelist__item').click _.bind(@onSelectNewQuestionType, @)
+      # OpenClinica: keyboard navigation (arrow keys + ENTER) intentionally removed
       return
 
     shrink: ->
@@ -95,6 +104,7 @@ module.exports = do ->
       $('body').off 'mousedown.cancel_add_question'
       @line.find("div").eq(0).fadeOut 250, =>
         @line.empty()
+        return
       @line.parents(".survey-editor__null-top-row").removeClass "expanded"
       if (@line.parents('.survey-editor').find('.survey__row').length)
         @line.parents(".survey-editor__null-top-row").addClass "survey-editor__null-top-row--hidden"
@@ -112,11 +122,20 @@ module.exports = do ->
           .addClass("survey-editor__null-top-row--hidden")
       return
 
+    ###
+    # This is the callback for final step of adding new question to Form Builder.
+    # It happens after user chooses question type, and results in new row being added.
+    ###
     onSelectNewQuestionType: (evt)->
       @question_name = @line.find('input').val()
+
+      # Here some unknown cleanup of select2 happens, not sure why at this point given it seems to be related to skip
+      # logic, which is not being available during question creation
       $rowSelect = $('select.skiplogic__rowselect')
       if $rowSelect.data('select2')
         $rowSelect.select2('destroy')
+
+      # Selected row type is being deducted by checking out data attribute of clicked node.
       rowType = $(evt.target).closest('.questiontypelist__item').data("menuItem")
 
       # if question name not provided by user, use default one for type or general one
@@ -125,6 +144,7 @@ module.exports = do ->
       else
         questionLabelValue = ''
 
+      # this is the de facto row object that will end up in Backbone Collection of rows
       rowDetails =
         type: rowType
 
@@ -150,6 +170,7 @@ module.exports = do ->
         if rowType is 'calculate'
           rowDetails.name = 'calculation'
 
+      # These options are needed for `addRow` function, so that it knows where to put the row we're adding.
       options = {}
       if (rowBefore = @options.spawnedFromView?.model)
         options.after = rowBefore
@@ -158,9 +179,22 @@ module.exports = do ->
         survey = @options.survey
         options.at = 0
 
+      # For some questions we start off with some parameters having default values.
+      # The code was added mostly for `image` to have some initial `max-pixels`.
+      typeConfig = $configs.questionParams[rowType]
+      initialParameters = {}
+      for configName, configValue of typeConfig
+        # We need to allow such values as `0` or `false` here, thus a more lengthy check
+        if (configValue.defaultValue isnt null and configValue.defaultValue isnt undefined)
+          initialParameters[configName] = configValue.defaultValue
+      if (Object.keys(initialParameters).length > 0)
+        rowDetails.parameters = writeParameters(initialParameters)
+
       rowDetails.isNewRow = true
 
+      # Here we add the row to the survey
       newRow = survey.addRow(rowDetails, options)
+      # …and link it up (TODO what?)
       newRow.linkUp(warnings: [], errors: [])
       if rowType is 'econsent_signature'
         econsentSignature.ensureEConsentSignatureStructure(newRow, '')
@@ -183,4 +217,4 @@ module.exports = do ->
         $fbC.animate scrollTop: scrollBy
       return
 
-  viewRowSelector
+  return viewRowSelector

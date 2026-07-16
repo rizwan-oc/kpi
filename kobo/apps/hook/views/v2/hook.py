@@ -1,160 +1,171 @@
-# coding: utf-8
 from datetime import timedelta
 
 import constance
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext as t
-from rest_framework import viewsets, status
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework_extensions.mixins import NestedViewSetMixin
 
-from kobo.apps.hook.constants import HOOK_LOG_FAILED, HOOK_LOG_PENDING
+from kobo.apps.audit_log.base_views import AuditLoggedModelViewSet
+from kobo.apps.audit_log.models import AuditType
 from kobo.apps.hook.models import Hook, HookLog
+from kobo.apps.hook.models.hook_log import HookLogStatus
+from kobo.apps.hook.schema_extensions.v2.hooks.serializers import HookRetryResponse
 from kobo.apps.hook.serializers.v2.hook import HookSerializer
 from kobo.apps.hook.tasks import retry_all_task
 from kpi.permissions import AssetEditorSubmissionViewerPermission
+from kpi.utils.schema_extensions.markdown import read_md
+from kpi.utils.schema_extensions.response import (
+    open_api_200_ok_response,
+    open_api_201_created_response,
+    open_api_204_empty_response,
+)
 from kpi.utils.viewset_mixins import AssetNestedObjectViewsetMixin
 
 
-class HookViewSet(AssetNestedObjectViewsetMixin, NestedViewSetMixin,
-                  viewsets.ModelViewSet):
+@extend_schema(
+    tags=['Survey data - Rest Services'],
+    parameters=[
+        OpenApiParameter(
+            name='uid_asset',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='UID of the parent assets',
+        ),
+    ],
+)
+@extend_schema_view(
+    create=extend_schema(
+        description=read_md('hook', 'hooks/create.md'),
+        responses=open_api_201_created_response(
+            HookSerializer,
+            require_auth=False,
+            raise_access_forbidden=False,
+        ),
+    ),
+    destroy=extend_schema(
+        description=read_md('hook', 'hooks/delete.md'),
+        responses=open_api_204_empty_response(
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_hook',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the hook',
+            ),
+        ],
+    ),
+    list=extend_schema(
+        description=read_md('hook', 'hooks/list.md'),
+        responses=open_api_200_ok_response(
+            HookSerializer,
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+    ),
+    partial_update=extend_schema(
+        description=read_md('hook', 'hooks/update.md'),
+        responses=open_api_200_ok_response(
+            HookSerializer,
+            require_auth=False,
+            raise_access_forbidden=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_hook',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the hook',
+            ),
+        ],
+    ),
+    retrieve=extend_schema(
+        description=read_md('hook', 'hooks/retrieve.md'),
+        responses=open_api_200_ok_response(
+            HookSerializer,
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_hook',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the hook',
+            ),
+        ],
+    ),
+    retry=extend_schema(
+        description=read_md('hook', 'hooks/retry.md'),
+        request=None,
+        responses=open_api_200_ok_response(
+            HookRetryResponse,
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_hook',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the hook',
+            ),
+        ],
+    ),
+    update=extend_schema(
+        exclude=True,
+    ),
+)
+class HookViewSet(
+    AssetNestedObjectViewsetMixin, NestedViewSetMixin, AuditLoggedModelViewSet
+):
     """
+    Available actions:
+    - create        → POST      /api/v2/asset/{uid_asset}/hooks/
+    - list          → GET       /api/v2/asset/{uid_asset}/hooks/
+    - delete        → DELETE    /api/v2/asset/{uid_asset}/hooks/{uid_hook}/
+    - retrieve      → GET       /api/v2/asset/{uid_asset}/hooks/{uid_hook}/
+    - update        → POST      /api/v2/asset/{uid_asset}/hooks/{uid_hook}/
+    - retry         → POST      /api/v2/asset/{uid_asset}/hooks/{uid_hook}/retry/
 
-    ## External services
-
-    Lists the external services endpoints accessible to requesting user
-
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/assets/{asset_uid}/hooks/
-    </pre>
-
-    > Example
-    >
-    >       curl -X GET https://[kpi-url]/api/v2/assets/a9PkXcgVgaDXuwayVeAuY5/hooks/
-
-    ## CRUD
-
-    * `asset_uid` - is the unique identifier of a specific asset
-    * `uid` - is the unique identifier of a specific external service
-
-    #### Retrieves an external service
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/assets/<code>{asset_uid}</code>/hooks/<code>{uid}</code>
-    </pre>
-
-
-    > Example
-    >
-    >       curl -X GET https://[kpi-url]/api/v2/assets/a9PkXcgVgaDXuwayVeAuY5/hooks/hfgha2nxBdoTVcwohdYNzb
-
-    #### Add an external service to asset.
-    <pre class="prettyprint">
-    <b>POST</b> /api/v2/assets/<code>{asset_uid}</code>/hooks/
-    </pre>
-
-
-    > Example
-    >
-    >       curl -X POST https://[kpi-url]/api/v2/assets/a9PkXcgVgaDXuwayVeAuY5/hooks/
-
-
-    > **Payload to create a new external service**
-    >
-    >        {
-    >           "name": {string},
-    >           "endpoint": {string},
-    >           "active": {boolean},
-    >           "email_notification": {boolean},
-    >           "export_type": {string},
-    >           "subset_fields": [{string}],
-    >           "auth_level": {string},
-    >           "settings": {
-    >               "username": {string},
-    >               "password": {string},
-    >               "custom_headers": {
-    >                   {string}: {string}
-    >                   ...
-    >                   {string}: {string}
-    >               }
-    >           },
-    >           "payload_template": {string}
-    >        }
-
-    where
-
-    * `name` and `endpoint` are required
-    * `active` is True by default
-    * `export_type` must be one these values:
-
-        1. `json` (_default_)
-        2. `xml`
-
-    * `email_notification` is a boolean. If true, User will be notified when request to remote server has failed.
-    * `auth_level` must be one these values:
-
-        1. `no_auth` (_default_)
-        2. `basic_auth`
-
-    * `subset_fields` is the list of fields of the form definition. Only these fields should be present in data sent to remote server
-    * `settings`.`custom_headers` is dictionary of `custom header`: `value`
-
-    For example:
-    >           "settings": {
-    >               "customer_headers": {
-    >                   "Authorization" : "Token 1af538baa9045a84c0e889f672baf83ff24"
-    >               }
-
-    * `payload_template` is a custom wrapper around `%SUBMISSION%` when sending data to remote server.
-       It can be used only with JSON submission format.
-
-    For example:
-    >           "payload_template": '{"fields": %SUBMISSION%}'
-
-    #### Update an external service.
-    <pre class="prettyprint">
-    <b>PATCH</b> /api/v2/assets/<code>{asset_uid}</code>/hooks/{uid}
-    </pre>
-
-
-    > Example
-    >
-    >       curl -X PATCH https://[kpi-url]/api/v2/assets/a9PkXcgVgaDXuwayVeAuY5/hooks/hfgha2nxBdoTVcwohdYNzb
-
-
-    Only specify properties to update in the payload. See above for payload structure
-
-    #### Delete an external service.
-    <pre class="prettyprint">
-    <b>DELETE</b> /api/v2/assets/<code>{asset_uid}</code>/hooks/{uid}
-    </pre>
-
-
-    > Example
-    >
-    >       curl -X DELETE https://[kpi-url]/api/v2/assets/a9PkXcgVgaDXuwayVeAuY5/hooks/hfgha2nxBdoTVcwohdYNzb
-
-    #### Retries all failed attempts
-    <pre class="prettyprint">
-    <b>PATCH</b> /api/v2/assets/<code>{asset_uid}</code>/hooks/<code>{hook_uid}</code>/retry/
-    </pre>
-
-    **This call is asynchronous. Job is sent to Celery to be run in background**
-
-    > Example
-    >
-    >       curl -X PATCH https://[kpi-url]/api/v2/assets/a9PkXcgVgaDXuwayVeAuY5/hooks/hfgha2nxBdoTVcwohdYNzb/retry/
-
-    It returns all logs `uid`s that are being retried.
-
-    ### CURRENT ENDPOINT
+    Documentation:
+    - docs/api/v2/hooks/create.md
+    - docs/api/v2/hooks/list.md
+    - docs/api/v2/hooks/delete.md
+    - docs/api/v2/hooks/retrieve.md
+    - docs/api/v2/hooks/update.md
+    - docs/api/v2/hooks/retry.md
     """
 
     model = Hook
-    lookup_field = "uid"
+    lookup_field = 'uid'
+    lookup_url_kwarg = 'uid_hook'
     serializer_class = HookSerializer
     permission_classes = (AssetEditorSubmissionViewerPermission,)
+    log_type = AuditType.PROJECT_HISTORY
+    logged_fields = [
+        'endpoint',
+        'active',
+        'uid',
+        ('object_id', 'asset.id'),
+        'asset.owner.username',
+    ]
 
     def get_queryset(self):
         queryset = self.model.objects.filter(asset__uid=self.asset.uid)
@@ -165,22 +176,29 @@ class HookViewSet(AssetNestedObjectViewsetMixin, NestedViewSetMixin,
         queryset = queryset.select_related('asset')
         return queryset
 
-    def perform_create(self, serializer):
+    def perform_create_override(self, serializer):
         serializer.save(asset=self.asset)
 
-    @action(detail=True, methods=["PATCH"])
-    def retry(self, request, uid=None, *args, **kwargs):
+    @action(detail=True, methods=['PATCH'])
+    def retry(self, request, uid_hook, *args, **kwargs):
         hook = self.get_object()
-        response = {"detail": t("Task successfully scheduled")}
+        response = {'detail': t('Task successfully scheduled')}
         status_code = status.HTTP_200_OK
         if hook.active:
-            seconds = HookLog.get_elapsed_seconds(constance.config.HOOK_MAX_RETRIES)
-            threshold = timezone.now() - timedelta(seconds=seconds)
+            threshold = timezone.now() - timedelta(seconds=120)
 
-            records = hook.logs.filter(Q(date_modified__lte=threshold,
-                                         status=HOOK_LOG_PENDING) |
-                                       Q(status=HOOK_LOG_FAILED)). \
-                values_list("id", "uid").distinct()
+            records = (
+                hook.logs.filter(
+                    Q(
+                        date_modified__lte=threshold,
+                        status=HookLogStatus.PENDING,
+                        tries__gte=constance.config.HOOK_MAX_RETRIES,
+                    )
+                    | Q(status=HookLogStatus.FAILED)
+                )
+                .values_list('id', 'uid')
+                .distinct()
+            )
             # Prepare lists of ids
             hooklogs_ids = []
             hooklogs_uids = []
@@ -190,20 +208,20 @@ class HookViewSet(AssetNestedObjectViewsetMixin, NestedViewSetMixin,
 
             if len(records) > 0:
                 # Mark all logs as PENDING
-                HookLog.objects.filter(id__in=hooklogs_ids).update(status=HOOK_LOG_PENDING)
+                HookLog.objects.filter(id__in=hooklogs_ids).update(
+                    status=HookLogStatus.PENDING
+                )
                 # Delegate to Celery
                 retry_all_task.apply_async(
                     queue='kpi_low_priority_queue', args=(hooklogs_ids,)
                 )
-                response.update({
-                    "pending_uids": hooklogs_uids
-                })
+                response.update({'pending_uids': hooklogs_uids})
 
             else:
-                response["detail"] = t("No data to retry")
+                response['detail'] = t('No data to retry')
                 status_code = status.HTTP_304_NOT_MODIFIED
         else:
-            response["detail"] = t("Can not retry on disabled hooks")
+            response['detail'] = t('Cannot retry on disabled hooks')
             status_code = status.HTTP_400_BAD_REQUEST
 
         return Response(response, status=status_code)

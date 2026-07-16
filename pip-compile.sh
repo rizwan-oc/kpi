@@ -1,18 +1,27 @@
 #!/bin/bash
 
-if [ -z "$(dpkg -l|grep 'libpq-dev')" ]; then
-  echo "Installing dependencies needed to pip-compile..."
-  apt-get -qq update && apt-get -qq -y install gcc libpq-dev
-fi
+set -x  # give the human some hope of progress
 
 for in_file in dependencies/pip/*.in
 do
-    # pass any arguments to pip-compile
+    out_file="${in_file%.*}.txt"
+
+    # pass any arguments to uv pip compile
     # useful for switches like `--upgrade-package`
-    pip-compile "$@" "$in_file"
+    uv pip compile "$@" "$in_file" --output-file "$out_file" \
+        --no-strip-extras \
+        --no-emit-package "setuptools" \
+        || exit $?
 done
-for out_file in dependencies/pip/*.txt
-do
-    # Workaround for https://github.com/jazzband/pip-tools/issues/1326
-    echo "backports-zoneinfo==0.2.1; python_version < '3.9'" >> "$out_file"
-done
+
+# These arguments align uv to pip-tools<=7 defaults:
+#   --no-strip-extras
+#   --no-emit-package "setuptools" (omitted as 'unsafe' in pip-tools<=7)
+#
+# Otherwise, uv and pip-tools>=8 both default to
+#   --strip-extras
+#   --allow-unsafe
+#
+# See
+#   - https://pip-tools.readthedocs.io/en/stable/#deprecations
+#   - https://docs.astral.sh/uv/pip/compatibility/#pip-compile-defaults

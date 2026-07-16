@@ -1,5 +1,5 @@
 module.exports = do ->
-  replaceSupportEmail = require('utils').replaceSupportEmail
+  replaceSupportEmail = require('#/textUtils').replaceSupportEmail
 
   XPATH_DOCS_URL = 'https://servicedesk.openclinica.com/support/solutions/articles/158000436443-form-logic'
 
@@ -26,9 +26,11 @@ module.exports = do ->
     if features isnt null
       features.cants.forEach((cant) ->
         cantsString += "<li><i class='k-icon k-icon-close'></i>#{cant.label}</li>"
+        return
       )
       features.cans.forEach((can) ->
         cansString += "<li><i class='k-icon k-icon-check'></i>#{can.label}</li>"
+        return
       )
 
     cansHtml = ''
@@ -52,7 +54,7 @@ module.exports = do ->
     """
 
   groupSettingsView = ->
-    """
+    template = """
       <section class="card__settings  row-extras row-extras--depr">
         <i class="card__settings-close k-icon k-icon-close js-toggle-card-settings"></i>
         <ul class="card__settings__tabs">
@@ -60,8 +62,8 @@ module.exports = do ->
           <li data-card-settings-tab-id="row-options" class="card__settings__tabs__tab card__settings__tabs__tab--active">
             #{t("All group settings")}
           </li>
-          <li data-card-settings-tab-id="skip-logic" class="card__settings__tabs__tab">
-            #{t("Skip Logic")}
+          <li data-card-settings-tab-id="relevant-logic" class="card__settings__tabs__tab">
+            #{t("Relevant Logic")}
           </li>
           <li data-card-settings-tab-id="repeat-count" class="card__settings__tabs__tab js-repeat-count-tab repeat-count-tab--hidden">
             #{t("Repeat Count")}
@@ -75,14 +77,23 @@ module.exports = do ->
             <i class="k-icon k-icon-arrow-left" aria-hidden="true"></i>
           </button>
           <ul class="js-card-settings-row-options card__settings__fields card__settings__fields--active"></ul>
-          <ul class="js-card-settings-skip-logic card__settings__fields"></ul>
+          <div class="js-card-settings-appearance card__settings__appearance-section is-collapsed">
+            <div class="card__settings__appearance-header js-appearance-toggle" role="button" tabindex="0" aria-expanded="false">
+              <span class="card__settings__appearance-title">#{t('Appearance')}</span>
+              <span class="js-appearance-pill card__settings__appearance-pill" style="display:none"></span>
+              <i class="k-icon k-icon-angle-down card__settings__appearance-toggle__icon" aria-hidden="true"></i>
+            </div>
+            <div class="js-appearance-body card__settings__appearance-body"></div>
+          </div>
+          <ul class="js-card-settings-relevant-logic card__settings__fields"></ul>
           <ul class="js-card-settings-repeat-count card__settings__fields card__settings__fields--repeat-count"></ul>
           <ul class="js-card-settings-locked-features card__settings__fields locking__ui-hidden"></ul>
         </div>
       </section>
     """
+    return template
   rowSettingsView = ()->
-    """
+    template = """
       <section class="card__settings  row-extras row-extras--depr">
         <i class="card__settings-close k-icon k-icon-close js-toggle-card-settings"></i>
         <ul class="card__settings__tabs">
@@ -90,8 +101,8 @@ module.exports = do ->
           <li data-card-settings-tab-id="row-options" class="card__settings__tabs__tab--active">
             #{t("Question Options")}
           </li>
-          <li data-card-settings-tab-id="skip-logic" class="card__settings__tabs__tab">
-            #{t("Skip Logic")}
+          <li data-card-settings-tab-id="relevant-logic" class="card__settings__tabs__tab">
+            #{t("Relevant Logic")}
           </li>
           <li data-card-settings-tab-id="validation-criteria" class="card__settings__tabs__tab">
             #{t("Validation Criteria")}
@@ -120,11 +131,19 @@ module.exports = do ->
               <div class="card__settings__fields-col js-card-settings-col-left"></div>
               <div class="card__settings__fields-col js-card-settings-col-right"></div>
             </div>
+            <div class="js-card-settings-appearance card__settings__appearance-section is-collapsed">
+              <div class="card__settings__appearance-header js-appearance-toggle" role="button" tabindex="0" aria-expanded="false">
+                <span class="card__settings__appearance-title">#{t('Appearance')}</span>
+                <span class="js-appearance-pill card__settings__appearance-pill" style="display:none"></span>
+                <i class="k-icon k-icon-angle-down card__settings__appearance-toggle__icon" aria-hidden="true"></i>
+              </div>
+              <div class="js-appearance-body card__settings__appearance-body"></div>
+            </div>
             <div class="js-appearance-section appearance-section appearance-section--hidden">
-              <div class="card__settings__advanced-toggle js-appearance-section-toggle" aria-expanded="false">
-                <span>#{t('Appearance')}</span>
-                <span class="js-appearance-pill appearance-pill"></span>
-                <i class="k-icon k-icon-angle-down card__settings__advanced-toggle__icon" aria-hidden="true"></i>
+              <div class="card__settings__appearance-header js-appearance-section-toggle" aria-expanded="false">
+                <span class="card__settings__appearance-title">#{t('Appearance')}</span>
+                <span class="js-appearance-pill card__settings__appearance-pill"></span>
+                <i class="k-icon k-icon-angle-down card__settings__appearance-toggle__icon" aria-hidden="true"></i>
               </div>
               <div class="js-appearance-card-content appearance-card-content is-collapsed"></div>
             </div>
@@ -134,7 +153,7 @@ module.exports = do ->
             </div>
             <div id="js-card-settings-row-options-advanced" class="card__settings__fields-grid js-card-settings-row-options-advanced is-collapsed"></div>
           </div>
-          <ul class="js-card-settings-skip-logic card__settings__fields"></ul>
+          <ul class="js-card-settings-relevant-logic card__settings__fields"></ul>
           <ul class="js-card-settings-validation-criteria card__settings__fields"></ul>
           <div class="js-card-settings-required-logic card__settings__fields"></div>
           <div class="js-card-settings-default-value card__settings__fields"></div>
@@ -143,6 +162,7 @@ module.exports = do ->
         </div>
       </section>
     """
+    return template
 
   xlfRowView = (surveyView) ->
       template = """
@@ -154,8 +174,8 @@ module.exports = do ->
           </div>
           <div class="card__text">
             <div class="card__header-name js-cancel-select-row js-cancel-sort"></div>
-            <textarea rows="1" placeholder="#{t("Enter question label (required for item to be visible)")}" class="card__header-title js-card-label js-cancel-select-row js-cancel-sort"></textarea>
-            <input type="text" placeholder="#{t("Enter question hint (optional)")}" class="card__header-hint js-card-hint js-cancel-select-row js-cancel-sort">
+            <textarea rows="1" placeholder="#{t("Enter question label (required for item to be visible)")}" class="card__header-title js-card-label js-cancel-select-row js-cancel-sort" dir="auto"></textarea>
+            <input type="text" placeholder="#{t("Enter question hint (optional)")}" class="card__header-hint js-card-hint js-cancel-select-row js-cancel-sort" dir="auto">
           </div>
           <div class="card__buttons">
             <span class="card__buttons__button card__buttons__button--settings card__buttons__button--gray js-toggle-card-settings" data-button-name="settings"><i class="k-icon k-icon-edit"></i></span>
@@ -173,6 +193,13 @@ module.exports = do ->
       #{expandingSpacerHtml}
       """
 
+  # This will be used by row types that are valid XLSForm types but are not yet supported by UI
+  unsupportedRowView = () ->
+    template = """
+    <div style="display: none;">This type of row is not supported by UI yet.</div>
+    """
+    return template
+
   # Empty js-group-icon is only sometimes used, but we need to reserve space for it
   groupView = (surveyView)->
     addToLibraryButton = ''
@@ -182,14 +209,14 @@ module.exports = do ->
             <i class="k-icon k-icon-folder-plus"></i>
           </span>
       """
-    """
+    template = """
     <div class="survey__row__item survey__row__item--group group card js-select-row">
       <header class="group__header">
         <div class="group__header__icon js-group-icon">
           <i class="k-icon"></i>
         </div>
         <i class="group__caret js-toggle-group-expansion k-icon k-icon-caret-down"></i>
-        <input type="text" class="card__header-title js-card-label js-cancel-select-row js-cancel-sort">
+        <input type="text" class="card__header-title js-card-label js-cancel-select-row js-cancel-sort" dir="auto">
         <div class="card__buttons">
           <span class="card__buttons__button card__buttons__button--settings card__buttons__button--gray js-toggle-card-settings">
             <i class="k-icon k-icon-edit"></i>
@@ -210,6 +237,7 @@ module.exports = do ->
     </div>
     #{expandingSpacerHtml}
     """
+    return template
 
   koboMatrixView = () ->
       template = """
@@ -220,7 +248,7 @@ module.exports = do ->
             <div class="noop card__indicator__icon"><i class="card__header-icon k-icon k-icon-matrix"></i></div>
           </div>
           <div class="card__text">
-            <input type="text" placeholder="#{t("Item label is required")}" class="card__header-title js-card-label js-cancel-select-row js-cancel-sort">
+            <input type="text" placeholder="#{t("Item label is required")}" class="card__header-title js-card-label js-cancel-select-row js-cancel-sort" dir="auto">
           </div>
           <div class="card__buttons">
             <span class="card__buttons__button card__buttons__button--settings card__buttons__button--gray js-toggle-card-settings" data-button-name="settings"><i class="k-icon k-icon-edit"></i></span>
@@ -297,11 +325,12 @@ module.exports = do ->
       </tfoot>
     </table>
     """
-    """
+    template = """
     <div class="score_preview">
       #{table_html}
     </div>
     """
+    return template
   rankView = (s, template_args={})->
     rank_levels_lis = for item in template_args.rank_levels
       autoclass = ""
@@ -343,7 +372,7 @@ module.exports = do ->
     rank_constraint_message_li = """
       #{rank_constraint_message_html}
     """
-    """
+    template = """
     <div class="rank_preview clearfix">
       <ol class="rank__rows">
         #{rank_rows_lis.join('')}
@@ -356,6 +385,7 @@ module.exports = do ->
       </ul>
     </div>
     """
+    return template
 
   # NOTE: Textbox value is empty, as we set it in some other place to avoid
   # problems with double quotes.
@@ -365,7 +395,7 @@ module.exports = do ->
     else
       modifier = 'custom'
 
-    """
+    template = """
     <div class="card__settings__fields__field">
       <label>#{t('Required')}:</label>
       <span class="settings__input">
@@ -403,6 +433,7 @@ module.exports = do ->
       </span>
     </div>
     """
+    return template
 
   requiredLogicPanel = () ->
     """
@@ -422,7 +453,7 @@ module.exports = do ->
     """
 
   paramsSettingsField = ->
-    """
+    template = """
     <div class="js-params-view card__settings__fields__field params-view__settings-wrapper">
       <label>#{t('Parameters')}:</label>
       <span class="settings__input">
@@ -430,36 +461,41 @@ module.exports = do ->
       </span>
     </div>
     """
+    return template
 
   paramsSimple = ->
-    """
+    template = """
     <div class="js-params-view params-view__simple-wrapper">
       <div class="params-view"></div>
     </div>
     """
+    return template
 
   selectQuestionExpansion = ->
-    """
+    template = """
     <div class="card--selectquestion__expansion row__multioptions js-cancel-sort">
       <div class="list-view">
         <ul></ul>
       </div>
     </div>
     """
+    return template
 
   expandChoiceList = ()->
-    """
+    template = """
     <span class="card__buttons__multioptions js-toggle-row-multioptions js-cancel-select-row"><i class='k-icon k-icon-caret-down' /></span>
     """
+    return template
 
   rowErrorView = (atts)->
-    """
+    template = """
     <div class="card card--error">
       #{t("Row could not be displayed:")} <pre>#{atts}</pre>
       <em>#{replaceSupportEmail(t("This question could not be imported. Please re-create it manually. Please contact us at help@kobotoolbox.org so we can fix this bug!"))}</em>
     </div>
     #{expandingSpacerHtml}
     """
+    return template
 
   defaultValuePanel = () ->
     """
@@ -501,22 +537,25 @@ module.exports = do ->
     </div>
     """
 
-  xlfRowView: xlfRowView
-  expandChoiceList: expandChoiceList
-  mandatorySettingSelector: mandatorySettingSelector
-  requiredLogicPanel: requiredLogicPanel
-  paramsSettingsField: paramsSettingsField
-  paramsSimple: paramsSimple
-  selectQuestionExpansion: selectQuestionExpansion
-  groupView: groupView
-  rowErrorView: rowErrorView
-  calculationPanel: calculationPanel
-  koboMatrixView: koboMatrixView
-  scoreView: scoreView
-  rankView: rankView
-  groupSettingsView: groupSettingsView
-  rowSettingsView: rowSettingsView
-  defaultValuePanel: defaultValuePanel
-  iconTooltip: iconTooltip
-  lockedFeatures: lockedFeatures
-  XPATH_DOCS_URL: XPATH_DOCS_URL
+  return {
+    xlfRowView: xlfRowView
+    unsupportedRowView: unsupportedRowView
+    expandChoiceList: expandChoiceList
+    mandatorySettingSelector: mandatorySettingSelector
+    requiredLogicPanel: requiredLogicPanel
+    paramsSettingsField: paramsSettingsField
+    paramsSimple: paramsSimple
+    selectQuestionExpansion: selectQuestionExpansion
+    groupView: groupView
+    rowErrorView: rowErrorView
+    calculationPanel: calculationPanel
+    koboMatrixView: koboMatrixView
+    scoreView: scoreView
+    rankView: rankView
+    groupSettingsView: groupSettingsView
+    rowSettingsView: rowSettingsView
+    defaultValuePanel: defaultValuePanel
+    iconTooltip: iconTooltip
+    lockedFeatures: lockedFeatures
+    XPATH_DOCS_URL: XPATH_DOCS_URL
+  }

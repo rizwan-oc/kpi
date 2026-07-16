@@ -1,0 +1,181 @@
+<h2>Expression Builder — Side Panel Layout</h2>
+<p class="subtitle">The panel opens alongside the form when editing any field's logic</p>
+
+<div class="mockup">
+  <div class="mockup-header">Form Designer with Expression Builder Panel</div>
+  <div class="mockup-body" style="display:flex;gap:0;min-height:520px;font-size:13px;">
+
+    <!-- Left: Form Builder (existing) -->
+    <div style="flex:1.1;background:#1a1a2e;padding:16px;border-right:1px solid #333;overflow:hidden;">
+      <div style="color:#888;font-size:11px;margin-bottom:12px;">FORM BUILDER (existing)</div>
+
+      <!-- Field rows -->
+      <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#ccc;display:flex;align-items:center;gap:8px;">
+        <span style="color:#666;font-size:11px;">T</span>
+        <span>Patient ID</span>
+        <span style="margin-left:auto;color:#555;font-size:11px;">text</span>
+      </div>
+      <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#ccc;display:flex;align-items:center;gap:8px;">
+        <span style="color:#666;font-size:11px;">#</span>
+        <span>Age</span>
+        <span style="margin-left:auto;color:#555;font-size:11px;">integer</span>
+      </div>
+      <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#ccc;display:flex;align-items:center;gap:8px;">
+        <span style="color:#666;font-size:11px;">#</span>
+        <span>Weight (kg)</span>
+        <span style="margin-left:auto;color:#555;font-size:11px;">decimal</span>
+      </div>
+      <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#ccc;display:flex;align-items:center;gap:8px;">
+        <span style="color:#666;font-size:11px;">#</span>
+        <span>Height (m)</span>
+        <span style="margin-left:auto;color:#555;font-size:11px;">decimal</span>
+      </div>
+      <div style="background:#2a2a4a;border:1px solid #5b6abf;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#e0e0ff;display:flex;align-items:center;gap:8px;">
+        <span style="color:#5b6abf;font-size:11px;">fx</span>
+        <span style="font-weight:600;">BMI</span>
+        <span style="margin-left:auto;font-size:11px;color:#5b6abf;">calculate</span>
+        <span style="background:#5b6abf;color:white;font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;">Edit Logic →</span>
+      </div>
+      <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#ccc;display:flex;align-items:center;gap:8px;">
+        <span style="color:#666;font-size:11px;">○</span>
+        <span>Diabetes History</span>
+        <span style="margin-left:auto;color:#555;font-size:11px;">select_one</span>
+      </div>
+      <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:8px;color:#ccc;display:flex;align-items:center;gap:8px;">
+        <span style="color:#666;font-size:11px;">#</span>
+        <span>Dosage</span>
+        <span style="margin-left:auto;color:#555;font-size:11px;">decimal</span>
+      </div>
+    </div>
+
+    <!-- Right: Expression Builder Panel -->
+    <div style="flex:1;background:#12122a;padding:16px;min-width:380px;">
+
+      <!-- Panel Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="color:#e0e0ff;font-weight:600;font-size:15px;">Expression Builder</div>
+          <div style="color:#888;font-size:11px;margin-top:2px;">BMI — Calculation</div>
+        </div>
+        <span style="color:#666;cursor:pointer;font-size:18px;">✕</span>
+      </div>
+
+      <!-- Tab bar: Calculation | Validation | Skip Logic -->
+      <div style="display:flex;gap:0;margin-bottom:16px;background:#1a1a2e;border-radius:6px;padding:2px;">
+        <div style="flex:1;text-align:center;padding:6px;background:#5b6abf;color:white;border-radius:4px;font-size:12px;font-weight:500;">Calculation</div>
+        <div style="flex:1;text-align:center;padding:6px;color:#666;font-size:12px;">Validation</div>
+        <div style="flex:1;text-align:center;padding:6px;color:#666;font-size:12px;">Skip Logic</div>
+      </div>
+
+      <!-- NL Input -->
+      <div style="background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:10px;margin-bottom:16px;">
+        <div style="color:#888;font-size:11px;margin-bottom:6px;">Describe the logic you want</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div style="flex:1;background:#252540;border:1px solid #444;border-radius:4px;padding:8px 10px;color:#aaa;font-size:12px;">Calculate BMI as weight divided by height squared</div>
+          <div style="background:#5b6abf;color:white;padding:6px 12px;border-radius:4px;font-size:12px;cursor:pointer;white-space:nowrap;">Generate ✦</div>
+        </div>
+      </div>
+
+      <!-- Visual Builder Rows -->
+      <div style="background:#1a1a2e;border-radius:6px;padding:12px;margin-bottom:12px;">
+        <div style="color:#888;font-size:11px;margin-bottom:10px;">EXPRESSION</div>
+
+        <!-- Row 1: weight / (height * height) shown as structured rows -->
+        <div style="background:#252540;border-radius:4px;padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="background:#3a3a5c;color:#a0a0ff;padding:2px 8px;border-radius:3px;font-size:12px;">weight</span>
+          <span style="color:#f0a050;font-size:12px;font-weight:600;">div</span>
+          <span style="color:#666;font-size:12px;">(</span>
+          <span style="background:#3a3a5c;color:#a0a0ff;padding:2px 8px;border-radius:3px;font-size:12px;">height</span>
+          <span style="color:#f0a050;font-size:12px;font-weight:600;">*</span>
+          <span style="background:#3a3a5c;color:#a0a0ff;padding:2px 8px;border-radius:3px;font-size:12px;">height</span>
+          <span style="color:#666;font-size:12px;">)</span>
+          <span style="margin-left:auto;color:#555;cursor:pointer;font-size:14px;">✎</span>
+        </div>
+
+        <!-- Inline editor for a row (expanded) -->
+        <div style="border:1px solid #5b6abf;border-radius:4px;padding:10px;margin-bottom:6px;background:#1e1e3a;">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+            <select style="background:#252540;color:#ccc;border:1px solid #444;border-radius:3px;padding:4px 8px;font-size:11px;">
+              <option>weight</option>
+              <option>height</option>
+              <option>age</option>
+            </select>
+            <select style="background:#252540;color:#f0a050;border:1px solid #444;border-radius:3px;padding:4px 8px;font-size:11px;">
+              <option>div</option>
+              <option>+</option>
+              <option>-</option>
+              <option>*</option>
+            </select>
+            <select style="background:#252540;color:#ccc;border:1px solid #444;border-radius:3px;padding:4px 8px;font-size:11px;">
+              <option>( group )</option>
+              <option>field</option>
+              <option>value</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:4px;">
+            <span style="background:#5b6abf;color:white;padding:3px 10px;border-radius:3px;font-size:11px;cursor:pointer;">Apply</span>
+            <span style="color:#888;padding:3px 10px;font-size:11px;cursor:pointer;">Cancel</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;gap:6px;margin-bottom:16px;">
+        <span style="background:#252540;color:#aaa;padding:5px 10px;border-radius:4px;font-size:11px;cursor:pointer;">+ Add condition</span>
+        <span style="background:#252540;color:#aaa;padding:5px 10px;border-radius:4px;font-size:11px;cursor:pointer;">+ Wrap in group</span>
+        <span style="background:#252540;color:#aaa;padding:5px 10px;border-radius:4px;font-size:11px;cursor:pointer;">+ Function</span>
+      </div>
+
+      <!-- Raw XPath toggle -->
+      <div style="background:#1a1a2e;border-radius:6px;padding:10px;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="color:#888;font-size:11px;">RAW EXPRESSION</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="color:#666;font-size:11px;">Edit</span>
+            <div style="width:28px;height:16px;background:#5b6abf;border-radius:8px;position:relative;">
+              <div style="width:12px;height:12px;background:white;border-radius:50%;position:absolute;top:2px;right:2px;"></div>
+            </div>
+          </div>
+        </div>
+        <code style="color:#7a7;font-size:12px;word-break:break-all;">${weight} div (${height} * ${height})</code>
+      </div>
+
+      <!-- Warnings -->
+      <div style="background:#2a2a1a;border:1px solid #554400;border-radius:6px;padding:8px 10px;margin-bottom:16px;display:flex;align-items:start;gap:8px;">
+        <span style="color:#f0a050;font-size:14px;">⚠</span>
+        <div>
+          <div style="color:#f0c050;font-size:12px;">Division by zero possible</div>
+          <div style="color:#888;font-size:11px;">If height is 0, this expression will fail. Consider wrapping in if(height != 0, ...)</div>
+        </div>
+      </div>
+
+      <!-- Save bar -->
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <span style="color:#888;padding:6px 14px;font-size:12px;cursor:pointer;">Cancel</span>
+        <span style="background:#5b6abf;color:white;padding:6px 14px;border-radius:4px;font-size:12px;cursor:pointer;">Save Expression</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:24px;">
+  <h3>Key UI Elements</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+    <div style="background:#1a1a2e;border-radius:6px;padding:12px;">
+      <div style="color:#5b6abf;font-size:12px;font-weight:600;margin-bottom:4px;">NL Input Bar</div>
+      <div style="color:#aaa;font-size:12px;">Top of panel. Type a description, click Generate. Replaces current expression with AI-generated AST.</div>
+    </div>
+    <div style="background:#1a1a2e;border-radius:6px;padding:12px;">
+      <div style="color:#5b6abf;font-size:12px;font-weight:600;margin-bottom:4px;">Tab Bar</div>
+      <div style="color:#aaa;font-size:12px;">Switch between Calculation, Validation, and Skip Logic for the selected field. Each tab has its own expression.</div>
+    </div>
+    <div style="background:#1a1a2e;border-radius:6px;padding:12px;">
+      <div style="color:#5b6abf;font-size:12px;font-weight:600;margin-bottom:4px;">Structured Rows</div>
+      <div style="color:#aaa;font-size:12px;">Each row shows a sub-expression with colored tokens. Click edit to expand inline dropdowns for field/operator/value.</div>
+    </div>
+    <div style="background:#1a1a2e;border-radius:6px;padding:12px;">
+      <div style="color:#5b6abf;font-size:12px;font-weight:600;margin-bottom:4px;">Raw Expression</div>
+      <div style="color:#aaa;font-size:12px;">Collapsible section showing XPath. Toggle enables direct text editing with bidirectional sync to visual builder.</div>
+    </div>
+  </div>
+</div>

@@ -1,29 +1,28 @@
-# coding: utf-8
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
-from django.contrib.auth.models import User
-from django.contrib.contenttypes.models import ContentType
 from django_request_cache import cache_for_request
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.relations import HyperlinkedIdentityField
 
-from bossoidc2.models import Keycloak as KeycloakModel
-
+from kobo.apps.oc_tenant_auth.models import KeycloakTenantUser as KeycloakModel
+from kobo.apps.kobo_auth.shortcuts import User
 from kpi.constants import ASSET_TYPE_COLLECTION, PERM_DISCOVER_ASSET
-from kpi.fields import PaginatedApiField
 from kpi.models.asset import Asset, UserAssetSubscription
 from kpi.models.object_permission import ObjectPermission
-from .asset import AssetUrlListSerializer
+from kpi.schema_extensions.v2.users.fields import MetadataField
+
+
+@extend_schema_field(OpenApiTypes.URI)
+class UrlSchemaExtension(HyperlinkedIdentityField):
+    pass
 
 
 class UserSerializer(serializers.HyperlinkedModelSerializer):
 
-    url = HyperlinkedIdentityField(
-        lookup_field='username', view_name='user-detail')
+    url = UrlSchemaExtension(lookup_field='username', view_name='user-kpi-detail')
     date_joined = serializers.SerializerMethodField()
     public_collection_subscribers_count = serializers.SerializerMethodField()
     public_collections_count = serializers.SerializerMethodField()
@@ -31,30 +30,37 @@ class UserSerializer(serializers.HyperlinkedModelSerializer):
 
     class Meta:
         model = User
-        fields = ('url',
-                  'username',
-                  'date_joined',
-                  'public_collection_subscribers_count',
-                  'public_collections_count',
-                  'subdomain'
-                  )
+        fields = (
+            'url',
+            'username',
+            'date_joined',
+            'public_collection_subscribers_count',
+            'public_collections_count',
+            'subdomain',
+        )
 
+    @extend_schema_field(OpenApiTypes.DATETIME)
     def get_date_joined(self, obj):
         return obj.date_joined.astimezone(ZoneInfo('UTC')).strftime(
             '%Y-%m-%dT%H:%M:%SZ')
 
+    @extend_schema_field(OpenApiTypes.INT)
     def get_public_collection_subscribers_count(self, user):
         public_collection_ids = self.__get_public_collection_ids(user.pk)
         return UserAssetSubscription.objects.filter(
             asset_id__in=public_collection_ids).exclude(user_id=user.pk).count()
 
+    @extend_schema_field(OpenApiTypes.INT)
     def get_public_collections_count(self, user):
         public_collection_ids = self.__get_public_collection_ids(user.pk)
         return len(public_collection_ids)
     
     def get_subdomain(self, user):
         if user is not None:
-            return KeycloakModel.objects.get(user=user).subdomain
+            try:
+                return KeycloakModel.objects.get(user=user).subdomain
+            except KeycloakModel.DoesNotExist:
+                return None
         return None
 
     @staticmethod
@@ -90,9 +96,11 @@ class UserListSerializer(UserSerializer):
             'metadata',
         )
 
+    @extend_schema_field(OpenApiTypes.INT)
     def get_asset_count(self, user):
-        return user.assets.count()
+        return user.assets_count
 
+    @extend_schema_field(MetadataField)
     def get_metadata(self, user):
         if not hasattr(user, 'extra_details'):
             return {}

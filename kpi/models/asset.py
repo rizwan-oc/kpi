@@ -1,43 +1,28 @@
-# coding: utf-8
-# 😬
 import copy
 import re
 from functools import reduce
 from operator import add
 from typing import Optional, Union
 
+import jsonschema
 from django.conf import settings
 from django.contrib.auth.models import Permission
-from django.contrib.postgres.indexes import GinIndex
-from django.db import models
-from django.db import transaction
-from django.db.models import Prefetch, Q, F
+from django.contrib.postgres.indexes import BTreeIndex, GinIndex
+from django.core.cache import cache
+from django.db import models, transaction
+from django.db.models import F, Prefetch, Q
 from django.utils.translation import gettext_lazy as t
 from taggit.managers import TaggableManager, _TaggableManager
 from taggit.utils import require_instance_manager
+
 from formpack.utils.flatten_content import flatten_content
 from formpack.utils.json_hash import json_hash
 from formpack.utils.kobo_locking import strip_kobo_locking_profile
-from jsonschema import validate as jsonschema_validate
-from bs4 import BeautifulSoup
-from pyxform import builder, xls2json
-from pyxform.errors import PyXFormError
-
-from kobo.apps.reports.constants import (
-    SPECIFIC_REPORTS_KEY,
-    DEFAULT_REPORTS_KEY,
-)
-from kobo.apps.subsequences.advanced_features_params_schema import (
-    ADVANCED_FEATURES_PARAMS_SCHEMA,
-)
-from kobo.apps.subsequences.utils import (
-    advanced_feature_instances,
-    advanced_submission_jsonschema,
-)
-from kobo.apps.subsequences.utils.parse_known_cols import parse_known_cols
+from kobo.apps.data_collectors.models import DataCollectorGroup
+from kobo.apps.reports.constants import DEFAULT_REPORTS_KEY, SPECIFIC_REPORTS_KEY
+from kobo.apps.subsequences.utils.supplement_data import get_analysis_form_json
+from kobo.apps.subsequences.utils.versioning import migrate_advanced_features
 from kpi.constants import (
-    ASSET_TYPES,
-    ASSET_TYPES_WITH_CONTENT,
     ASSET_TYPE_BLOCK,
     ASSET_TYPE_COLLECTION,
     ASSET_TYPE_EMPTY,
@@ -45,13 +30,15 @@ from kpi.constants import (
     ASSET_TYPE_SURVEY,
     ASSET_TYPE_TEMPLATE,
     ASSET_TYPE_TEXT,
+    ASSET_TYPES,
+    ASSET_TYPES_WITH_CONTENT,
+    ATTACHMENT_QUESTION_TYPES,
     PERM_ADD_SUBMISSIONS,
     PERM_CHANGE_ASSET,
     PERM_CHANGE_SUBMISSIONS,
     PERM_DELETE_ASSET,
     PERM_DELETE_SUBMISSIONS,
     PERM_DISCOVER_ASSET,
-    PERM_FROM_KC_ONLY,
     PERM_MANAGE_ASSET,
     PERM_PARTIAL_SUBMISSIONS,
     PERM_VALIDATE_SUBMISSIONS,
@@ -65,25 +52,66 @@ from kpi.exceptions import (
     BadPermissionsException,
     DeploymentDataException,
 )
-from kpi.fields import (
-    KpiUidField,
-    LazyDefaultJSONBField,
-)
+from kpi.fields import KpiUidField, LazyDefaultJSONBField
 from kpi.mixins import (
     FormpackXLSFormUtilsMixin,
     ObjectPermissionMixin,
-    XlsExportableMixin,
-    StandardizeSearchableFieldMixin,
     OCFormUtilsMixin,
+    StandardizeSearchableFieldMixin,
+    XlsExportableMixin,
 )
+from kpi.models.abstract_models import AbstractTimeStampedModel
 from kpi.models.asset_file import AssetFile
 from kpi.models.asset_snapshot import AssetSnapshot
 from kpi.models.asset_user_partial_permission import AssetUserPartialPermission
 from kpi.models.asset_version import AssetVersion
 from kpi.utils.asset_content_analyzer import AssetContentAnalyzer
-from kpi.utils.object_permission import get_cached_code_names
+from kpi.utils.object_permission import (
+    get_cached_code_names,
+    post_assign_partial_perm,
+    post_remove_partial_perms,
+)
 from kpi.utils.sluggify import sluggify_label
-from kpi.tasks import remove_asset_snapshots
+
+SEARCH_FIELD_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'owner_username': {'type': 'string'},
+        'organization_name': {'type': 'string'},
+    },
+    'required': ['owner_username', 'organization_name'],
+}
+
+
+class AssetDeploymentStatus(models.TextChoices):
+
+    ARCHIVED = 'archived', 'Archived'
+    DEPLOYED = 'deployed', 'Deployed'
+    DRAFT = 'draft', 'Draft'
+
+
+class AssetSetting:
+    """
+    Utility class for standardizing settings
+
+    Used with calls to standardize_searchable_field
+
+    Parameters:
+      setting_type [type]: can be str, dict, or list
+      default_val [object|Callable]: can be either a value or a callable on an
+      asset force_default [boolean]: if true, always use the default value
+    """
+    def __init__(self, setting_type, default_val=None, force_default=False):
+        standard_defaults = {
+            list: [],
+            dict: {},
+            str: '',
+        }
+        self.setting_type = setting_type
+        self.default_val = (
+            default_val if default_val else standard_defaults[setting_type]
+        )
+        self.force_default = force_default
 
 
 # TODO: Would prefer this to be a mixin that didn't derive from `Manager`.
@@ -96,8 +124,11 @@ class AssetWithoutPendingDeletedManager(models.Manager):
         # (and the default Django create() does not allow that)
         created = self.model(**kwargs)
         self._for_write = True
-        created.save(force_insert=True, using=self.db,
-                     update_parent_languages=update_parent_languages)
+        created.save(
+            force_insert=True,
+            using=self.db,
+            update_parent_languages=update_parent_languages,
+        )
 
         if tag_string:
             created.tag_string = tag_string
@@ -112,7 +143,8 @@ class AssetWithoutPendingDeletedManager(models.Manager):
 
     def deployed(self):
         """
-        Filter for deployed assets (i.e. assets without a null value for `date_deployed`)
+        Filter for deployed assets, i.e.: assets without a null value for
+        `date_deployed`.
         """
         return self.exclude(date_deployed__isnull=True)
 
@@ -136,28 +168,28 @@ class KpiTaggableManager(_TaggableManager):
         strips leading and trailng whitespace. Behavior should match the
         cleanupTags function in jsapp/js/utils.ts. """
         tags_out = []
-        for t in tags:
+        for tag in tags:
             # Modify strings only; the superclass' add() method will then
             # create Tags or use existing ones as appropriate.  We do not fix
             # existing Tag objects, which could also be passed into this
             # method, because a fixed name could collide with the name of
             # another Tag object already in the database.
-            if isinstance(t, str):
-                t = t.strip().replace(' ', '-')
-            tags_out.append(t)
+            if isinstance(tag, str):
+                tag = tag.strip().replace(' ', '-')
+            tags_out.append(tag)
         super().add(*tags_out, **kwargs)
 
 
-class Asset(ObjectPermissionMixin,
-            DeployableMixin,
-            XlsExportableMixin,
-            FormpackXLSFormUtilsMixin,
-            StandardizeSearchableFieldMixin,
-            OCFormUtilsMixin,
-            models.Model):
+class Asset(
+    ObjectPermissionMixin,
+    DeployableMixin,
+    XlsExportableMixin,
+    FormpackXLSFormUtilsMixin,
+    StandardizeSearchableFieldMixin,
+    OCFormUtilsMixin,
+    AbstractTimeStampedModel,
+):
     name = models.CharField(max_length=255, blank=True, default='')
-    date_created = models.DateTimeField(auto_now_add=True)
-    date_modified = models.DateTimeField(auto_now=True)
     date_deployed = models.DateTimeField(null=True)
     content = models.JSONField(default=dict)
     summary = models.JSONField(default=dict)
@@ -168,15 +200,29 @@ class Asset(ObjectPermissionMixin,
     advanced_features = LazyDefaultJSONBField(default=dict)
     known_cols = LazyDefaultJSONBField(default=list)
     asset_type = models.CharField(
-        choices=ASSET_TYPES, max_length=20, default=ASSET_TYPE_SURVEY, db_index=True
+        choices=ASSET_TYPES,
+        max_length=20,
+        default=ASSET_TYPE_SURVEY,
+        db_index=True,
     )
     parent = models.ForeignKey('Asset', related_name='children',
                                null=True, blank=True, on_delete=models.CASCADE)
-    owner = models.ForeignKey('auth.User', related_name='assets', null=True,
-                              on_delete=models.CASCADE)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='assets',
+        null=True,
+        on_delete=models.CASCADE,
+    )
     uid = KpiUidField(uid_prefix='a')
     tags = TaggableManager(manager=KpiTaggableManager)
     settings = models.JSONField(default=dict)
+    data_collector_group = models.ForeignKey(
+        DataCollectorGroup,
+        related_name='assets',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
 
     # `_deployment_data` must **NOT** be touched directly by anything except
     # the `deployment` property provided by `DeployableMixin`.
@@ -204,7 +250,26 @@ class Asset(ObjectPermissionMixin,
     #   }
     # }
     paired_data = LazyDefaultJSONBField(default=dict)
-    pending_delete = models.BooleanField(default=False)
+    pending_delete = models.BooleanField(default=False, db_index=True)
+    # `_deployment_status` is calculated field, therefore should **NOT** be
+    # set directly.
+    _deployment_status = models.CharField(
+        max_length=8,
+        choices=AssetDeploymentStatus.choices,
+        null=True,
+        blank=True,
+        db_index=True
+    )
+    created_by = models.CharField(max_length=150, null=True, blank=True, db_index=True)
+    last_modified_by = models.CharField(
+        max_length=150, null=True, blank=True, db_index=True
+    )
+
+    # Distinguish between projects created by the organization owner and those
+    # created by other members by introducing a flag to manage project
+    # visibility in the "My Projects" list. (#5451)
+    is_excluded_from_projects_list = models.BooleanField(null=True)
+    search_field = LazyDefaultJSONBField(default=dict)
 
     objects = AssetWithoutPendingDeletedManager()
     all_objects = AssetAllManager()
@@ -219,12 +284,17 @@ class Asset(ObjectPermissionMixin,
             GinIndex(
                 F('settings__country_codes'), name='settings__country_codes_idx'
             ),
+            # ToDo remove this index. It is wrong. It should be
+            #  `_deployment_data__backend_response__formid` but not used anymore.
+            BTreeIndex(
+                F('_deployment_data__formid'), name='deployment_data__formid_idx'
+            ),
         ]
 
         # Example in Django documentation  represents `ordering` as a list
         # (even if it can be a list or a tuple). We enforce the type to `list`
         # because `rest_framework.filters.OrderingFilter` work with lists.
-        # `AssetOrderingFilter` inherits from this class and it is used `
+        # `AssetOrderingFilter` inherits from this class, and it is used `
         # in `AssetViewSet to sort the result.
         # It avoids back and forth between types and/or coercing where
         # ordering is needed
@@ -246,11 +316,7 @@ class Asset(ObjectPermissionMixin,
                                          'for specific users')),
             (PERM_CHANGE_SUBMISSIONS, t('Can modify submitted data for asset')),
             (PERM_DELETE_SUBMISSIONS, t('Can delete submitted data for asset')),
-            (PERM_VALIDATE_SUBMISSIONS, t("Can validate submitted data asset")),
-            # TEMPORARY Issue #1161: A flag to indicate that permissions came
-            # solely from `sync_kobocat_xforms` and not from any user
-            # interaction with KPI
-            (PERM_FROM_KC_ONLY, 'INTERNAL USE ONLY; DO NOT ASSIGN')
+            (PERM_VALIDATE_SUBMISSIONS, t('Can validate submitted data asset')),
         )
 
         # Since Django 2.1, 4 permissions are added for each registered model:
@@ -258,7 +324,7 @@ class Asset(ObjectPermissionMixin,
         # - change
         # - delete
         # - view
-        # See https://docs.djangoproject.com/en/2.2/topics/auth/default/#default-permissions
+        # See https://docs.djangoproject.com/en/2.2/topics/auth/default/#default-permissions  # noqa
         # for more detail.
         # `view_asset` clashes with newly built-in one.
         # The simplest way to fix this is to keep old behaviour
@@ -314,7 +380,7 @@ class Asset(ObjectPermissionMixin,
     # Depending on our `asset_type`, only some permissions might be applicable
     ASSIGNABLE_PERMISSIONS_BY_TYPE = {
         ASSET_TYPE_SURVEY: tuple(
-            (p for p in ASSIGNABLE_PERMISSIONS if p != PERM_DISCOVER_ASSET)
+            p for p in ASSIGNABLE_PERMISSIONS if p != PERM_DISCOVER_ASSET
         ),
         ASSET_TYPE_TEMPLATE: (
             PERM_VIEW_ASSET,
@@ -362,13 +428,10 @@ class Asset(ObjectPermissionMixin,
         PERM_CHANGE_ASSET: (PERM_VIEW_ASSET,),
         PERM_DISCOVER_ASSET: (PERM_VIEW_ASSET,),
         PERM_MANAGE_ASSET: tuple(
-            (
-                p
-                for p in ASSIGNABLE_PERMISSIONS
-                if p not in (PERM_MANAGE_ASSET, PERM_PARTIAL_SUBMISSIONS)
-            )
+            p
+            for p in ASSIGNABLE_PERMISSIONS
+            if p not in (PERM_MANAGE_ASSET, PERM_PARTIAL_SUBMISSIONS)
         ),
-        PERM_ADD_SUBMISSIONS: (PERM_VIEW_ASSET,),
         PERM_VIEW_SUBMISSIONS: (PERM_VIEW_ASSET,),
         PERM_PARTIAL_SUBMISSIONS: (PERM_VIEW_ASSET,),
         PERM_CHANGE_SUBMISSIONS: (
@@ -393,28 +456,33 @@ class Asset(ObjectPermissionMixin,
         PERM_VALIDATE_SUBMISSIONS: (PERM_PARTIAL_SUBMISSIONS,),
     }
 
-    # Some permissions must be copied to KC
-    KC_PERMISSIONS_MAP = {  # keys are KPI's codenames, values are KC's
-        PERM_CHANGE_SUBMISSIONS: 'change_xform',  # "Can Edit" in KC UI
-        PERM_VIEW_SUBMISSIONS: 'view_xform',  # "Can View" in KC UI
-        PERM_ADD_SUBMISSIONS: 'report_xform',  # "Can submit to" in KC UI
-        PERM_DELETE_SUBMISSIONS: 'delete_data_xform',  # "Can Delete Data" in KC UI
-        PERM_VALIDATE_SUBMISSIONS: 'validate_xform',  # "Can Validate" in KC UI
-    }
-    KC_CONTENT_TYPE_KWARGS = {'app_label': 'logger', 'model': 'xform'}
     # KC records anonymous access as flags on the `XForm`
     KC_ANONYMOUS_PERMISSIONS_XFORM_FLAGS = {
+        PERM_ADD_SUBMISSIONS: {'require_auth': False},
         PERM_VIEW_SUBMISSIONS: {'shared': True, 'shared_data': True}
+    }
+
+    STANDARDIZED_SETTINGS = {
+        'country': AssetSetting(setting_type=list, default_val=[]),
+        'sector': AssetSetting(setting_type=dict, default_val={}),
+        'description': AssetSetting(setting_type=str, default_val=None),
+        'organization': AssetSetting(setting_type=str, default_val=None),
+        'country_codes': AssetSetting(
+            setting_type=list,
+            default_val=lambda asset: [c['value'] for c in asset.settings['country']],
+            force_default=True,
+        ),
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # The two fields below are needed to keep a trace of the object state
+        # The fields below are needed to keep a trace of the object state
         # before any alteration. See `__self.__copy_hidden_fields()` for details
         # They must be set with an invalid value for their counterparts to
         # be the comparison is accurate.
         self.__parent_id_copy = -1
         self.__deployment_data_copy = None
+        self._initial_data_collector_group_id = -1
         self.__copy_hidden_fields()
 
     def __str__(self):
@@ -451,6 +519,7 @@ class Asset(ObjectPermissionMixin,
         Can be disabled / skipped by calling with parameter:
         asset.save(adjust_content=False)
         """
+        self.__normalize_settings_and_translations(self.content)
         self._adjust_content_custom_column(self.content)
         self._adjust_content_media_column_before_standardize(self.content)
         self._standardize(self.content)
@@ -461,7 +530,7 @@ class Asset(ObjectPermissionMixin,
         self._strip_empty_rows(self.content)
         self._assign_kuids(self.content)
         self._autoname(self.content)
-        self._insert_qpath(self.content)
+        self._insert_xpath(self.content)
         self._unlink_list_items(self.content)
         self._remove_empty_expressions(self.content)
         self._remove_version(self.content)
@@ -487,10 +556,8 @@ class Asset(ObjectPermissionMixin,
             # Remove newlines and tabs (they are stripped in front end anyway)
             self.name = re.sub(r'[\n\t]+', '', _title)
 
-    def analysis_form_json(self):
-        additional_fields = list(self._get_additional_fields())
-        engines = dict(self._get_engines())
-        return {'engines': engines, 'additional_fields': additional_fields}
+    def analysis_form_json(self, omit_question_types=None):
+        return get_analysis_form_json(self)
 
     def clone(self, version_uid=None):
         # not currently used, but this is how "to_clone_dict" should work
@@ -522,6 +589,13 @@ class Asset(ObjectPermissionMixin,
             '-date_modified')
 
     @property
+    def deployment_status(self):
+        """
+        Public property for `_deployment_status`
+        """
+        return self._deployment_status
+
+    @property
     def discoverable_when_public(self):
         # This property is only needed when `self` is a collection.
         # We want to make a distinction between a collection which is not
@@ -533,25 +607,100 @@ class Asset(ObjectPermissionMixin,
         return self.permissions.filter(permission__codename=PERM_DISCOVER_ASSET,
                                        user_id=settings.ANONYMOUS_USER_ID).exists()
 
-    def get_advanced_feature_instances(self):
-        return advanced_feature_instances(self.content, self.advanced_features)
+    def get_all_attachment_xpaths(self, only_cached_data: bool = False) -> list | None:
+        """
+        Get all attachment xpaths from deployed versions.
+        Results are cached in Redis for 24 hours.
+        """
 
-    def get_advanced_submission_schema(self, url=None, content=False):
-        if len(self.advanced_features) == 0:
-            NO_FEATURES_MSG = 'no advanced features activated for this form'
-            return {'type': 'object', '$description': NO_FEATURES_MSG}
-        last_deployed_version = self.deployed_versions.first()
-        if content:
-            return advanced_submission_jsonschema(
-                content, self.advanced_features, url=url
-            )
-        if last_deployed_version is None:
-            NO_DEPLOYMENT_MSG = 'asset needs a deployment for this feature'
-            return {'type': 'object', '$description': NO_DEPLOYMENT_MSG}
-        content = last_deployed_version.version_content
-        return advanced_submission_jsonschema(
-            content, self.advanced_features, url=url
+        # We previously used `cache_for_request`, but it provides no benefit in Celery
+        # tasks. A "protected" property on the Asset instance now serves the same
+        # purpose during its lifecycle.
+        if (
+            _all_attachment_xpaths := getattr(self, '_all_attachment_xpaths', None)
+        ) is not None:
+            return _all_attachment_xpaths
+
+        cache_key = (
+            f'all_attachment_xpaths:{self.uid}:{self.latest_deployed_version_uid}'
         )
+
+        # Try to get from Redis cache
+        cached_xpaths = cache.get(cache_key)
+
+        if cached_xpaths is not None:
+            return cached_xpaths
+        elif only_cached_data:
+            return None
+
+        # return deployed versions first
+        versions = self.asset_versions.filter(deployed=True).order_by('-date_modified')
+        xpaths = set()
+        for version in versions:
+            if xpaths_from_version := self.get_attachment_xpaths_from_version(version):
+                xpaths.update(xpaths_from_version)
+
+        xpaths_list = list(xpaths)
+
+        # Store in Redis cache
+        cache.set(cache_key, xpaths_list, timeout=settings.ATTACHMENT_XPATHS_CACHE_TTL)
+
+        setattr(self, '_all_attachment_xpaths', xpaths_list)
+        return self._all_attachment_xpaths
+
+    def get_attachment_xpaths_from_version(
+        self, version: AssetVersion = None
+    ) -> list | None:
+        """
+        Get attachment xpaths from a specific version.
+
+        Results are cached in Redis for 24 hours.
+        """
+
+        if version:
+            content = version.to_formpack_schema()['content']
+            cache_key = f'attachment_xpaths:{self.uid}:{version.uid}'
+        else:
+            content = self.content
+            cache_key = f'attachment_xpaths:{self.uid}:no-version'
+
+        cached_xpaths = cache.get(cache_key)
+
+        if cached_xpaths is not None:
+            return cached_xpaths
+
+        survey = content['survey']
+
+        def _get_xpaths(survey_: dict) -> Optional[list]:
+            """
+            Returns an empty list if no questions that take attachments are
+            present. Returns `None` if XPaths are missing from the survey
+            content
+            """
+            xpaths = []
+            for question in survey_:
+                if question['type'] not in ATTACHMENT_QUESTION_TYPES:
+                    continue
+                try:
+                    xpath = question['$xpath']
+                except KeyError:
+                    return None
+                xpaths.append(xpath)
+
+            return xpaths
+
+        if xpaths := _get_xpaths(survey):
+            return xpaths
+
+        # Inject missing `$xpath` properties
+        self._insert_xpath(content)
+
+        xpaths_list = _get_xpaths(survey)
+
+        # Store in Redis cache
+        cache.set(cache_key, xpaths_list, timeout=settings.ATTACHMENT_XPATHS_CACHE_TTL)
+
+        return xpaths_list
 
     def get_filters_for_partial_perm(
         self, user_id: int, perm: str = PERM_VIEW_SUBMISSIONS
@@ -562,12 +711,14 @@ class Asset(ObjectPermissionMixin,
 
         `perm` can only one of the submission permissions.
         """
+
         if (
             not perm.endswith(SUFFIX_SUBMISSIONS_PERMS)
             or perm == PERM_PARTIAL_SUBMISSIONS
         ):
-            raise BadPermissionsException(t('Only partial permissions for '
-                                            'submissions are supported'))
+            raise BadPermissionsException(
+                t('Only partial permissions for submissions are supported')
+            )
 
         perms = self.get_partial_perms(user_id, with_filters=True)
         if perms:
@@ -663,8 +814,14 @@ class Asset(ObjectPermissionMixin,
         If user doesn't have any partial permissions, it returns `None`.
         """
 
-        perms = self.asset_partial_permissions.filter(user_id=user_id)\
-            .values_list("permissions", flat=True).first()
+        if user_id == self.owner_id:
+            return None
+
+        perms = (
+            self.asset_partial_permissions.filter(user_id=user_id)
+            .values_list('permissions', flat=True)
+            .first()
+        )
 
         if perms:
             if with_filters:
@@ -675,18 +832,11 @@ class Asset(ObjectPermissionMixin,
         return None
 
     @property
-    def has_active_hooks(self):
-        """
-        Returns if asset has active hooks.
-        Useful to update `kc.XForm.has_kpi_hooks` field.
-        :return: {boolean}
-        """
-        return self.hooks.filter(active=True).exists()
-
-    @property
     def has_advanced_features(self):
         if self.advanced_features is None:
             return False
+        # FIXME: has dubious utility with new advanced_features
+        # that always have `_version`?
         return len(self.advanced_features) > 0
 
     def has_subscribed_user(self, user_id):
@@ -729,33 +879,37 @@ class Asset(ObjectPermissionMixin,
 
     @staticmethod
     def optimize_queryset_for_list(queryset):
-        """ Used by serializers to improve performance when listing assets """
-        queryset = queryset.defer(
-            # Avoid pulling these from the database because they are often huge
-            # and we don't need them for list views.
-            'content', 'report_styles'
-        ).select_related(
-            # We only need `username`, but `select_related('owner__username')`
-            # actually pulled in the entire `auth_user` table under Django 1.8.
-            # In Django 1.9+, "select_related() prohibits non-relational fields
-            # for nested relations."
-            'owner',
-            'parent',
-        ).prefetch_related(
-            'permissions__permission',
-            'permissions__user',
-            # `Prefetch(..., to_attr='prefetched_list')` stores the prefetched
-            # related objects in a list (`prefetched_list`) that we can use in
-            # other methods to avoid additional queries; see:
-            # https://docs.djangoproject.com/en/1.8/ref/models/querysets/#prefetch-objects
-            Prefetch('tags', to_attr='prefetched_tags'),
-            Prefetch(
-                'asset_versions',
-                queryset=AssetVersion.objects.order_by(
-                    '-date_modified'
-                ).only('uid', 'asset', 'date_modified', 'deployed'),
-                to_attr='prefetched_latest_versions',
-            ),
+        """Used by serializers to improve performance when listing assets"""
+        queryset = (
+            queryset.defer(
+                # Avoid pulling these from the database because they are often huge
+                # and we don't need them for list views.
+                'content',
+                'report_styles',
+            )
+            .select_related(
+                # We only need `username`, but `select_related('owner__username')`
+                # actually pulled in the entire `auth_user` table under Django 1.8.
+                # In Django 1.9+, "select_related() prohibits non-relational fields
+                # for nested relations."
+                'owner',
+                'parent',
+            )
+            .prefetch_related(
+                # `Prefetch(..., to_attr='prefetched_list')` stores the prefetched
+                # related objects in a list (`prefetched_list`) that we can use in
+                # other methods to avoid additional queries; see:
+                # https://docs.djangoproject.com/en/1.8/ref/models/querysets/#prefetch-objects
+                Prefetch('tags', to_attr='prefetched_tags'),
+                Prefetch(
+                    'asset_versions',
+                    queryset=AssetVersion.objects.order_by('-date_modified').only(
+                        'uid', 'asset', 'date_modified', 'deployed'
+                    ),
+                    to_attr='prefetched_latest_versions',
+                ),
+                Prefetch('asset_export_settings'),
+            )
         )
         return queryset
 
@@ -763,6 +917,9 @@ class Asset(ObjectPermissionMixin,
         super().refresh_from_db(using=using, fields=fields)
         # Refresh hidden fields too
         self.__copy_hidden_fields(fields)
+        # reset caching fields
+        self._qpaths_xpaths_mapping = {}
+        self._all_attachment_xpaths = None
 
     def rename_translation(self, _from, _to):
         if not self._has_translations(self.content, 2):
@@ -793,6 +950,9 @@ class Asset(ObjectPermissionMixin,
         **kwargs
     ):
         is_new = self.pk is None
+
+        if is_new:
+            self._populate_search_field()
 
         if self.asset_type not in ASSET_TYPES_WITH_CONTENT:
             # so long as all of the operations in this overridden `save()`
@@ -844,28 +1004,27 @@ class Asset(ObjectPermissionMixin,
         if adjust_content:
             self.adjust_content_on_save()
 
-        if (
-            not update_fields
-            or update_fields and 'advanced_features' in update_fields
-        ):
-            self.validate_advanced_features()
+        if not update_fields or update_fields and 'advanced_features' in update_fields:
+            migrate_advanced_features(self, save_asset=False)
 
         # standardize settings (only when required)
         if (
             (not update_fields or update_fields and 'settings' in update_fields)
             and self.asset_type in [ASSET_TYPE_COLLECTION, ASSET_TYPE_SURVEY]
         ):
-            self.standardize_json_field('settings', 'country', list)
-            self.standardize_json_field(
-                'settings',
-                'country_codes',
-                list,
-                [c['value'] for c in self.settings['country']],
-                force_default=True
-            )
-            self.standardize_json_field('settings', 'sector', dict)
-            self.standardize_json_field('settings', 'description', str)
-            self.standardize_json_field('settings', 'organization', str)
+            # TODO: add a settings jsonschema to validate these
+            for setting_name, setting in self.STANDARDIZED_SETTINGS.items():
+                self.standardize_json_field(
+                    'settings',
+                    setting_name,
+                    setting.setting_type,
+                    (
+                        setting.default_val(self)
+                        if callable(setting.default_val)
+                        else setting.default_val
+                    ),
+                    setting.force_default,
+                )
 
         # populate summary (only when required)
         if not update_fields or update_fields and 'summary' in update_fields:
@@ -903,6 +1062,8 @@ class Asset(ObjectPermissionMixin,
             else:
                 self._deployment_data.pop('_stored_data_key', None)
                 self.__copy_hidden_fields()
+
+        self.set_deployment_status()
 
         self._survey_column_oc_save_adjustments()
 
@@ -945,6 +1106,18 @@ class Asset(ObjectPermissionMixin,
 
         if create_version:
             self.create_version()
+
+    def set_deployment_status(self):
+        if self.asset_type != ASSET_TYPE_SURVEY:
+            return
+
+        if self.has_deployment:
+            if self.deployment.active:
+                self._deployment_status = AssetDeploymentStatus.DEPLOYED
+            else:
+                self._deployment_status = AssetDeploymentStatus.ARCHIVED
+        else:
+            self._deployment_status = AssetDeploymentStatus.DRAFT
 
     @property
     def tag_string(self):
@@ -994,31 +1167,12 @@ class Asset(ObjectPermissionMixin,
     def to_ss_structure(self):
         return flatten_content(self.content, in_place=False)
 
-    def update_submission_extra(self, content, user=None):
-        submission_uuid = content.get('submission')
-        # the view had better have handled this
-        assert submission_uuid is not None
-
-        # `select_for_update()` can only lock things that exist; make sure
-        # a `SubmissionExtras` exists for this submission before proceeding
-        self.submission_extras.get_or_create(submission_uuid=submission_uuid)
-
-        with transaction.atomic():
-            sub = (
-                self.submission_extras.filter(submission_uuid=submission_uuid)
-                .select_for_update()
-                .first()
-            )
-            instances = self.get_advanced_feature_instances()
-            compiled_content = {**sub.content}
-            for instance in instances:
-                compiled_content = instance.compile_revised_record(
-                    compiled_content, edits=content
-                )
-            sub.content = compiled_content
-            sub.save()
-
-        return sub
+    def update_search_field(self, **kwargs):
+        if self.search_field is None:
+            self.search_field = {}
+        for key, value in kwargs.items():
+            self.search_field[key] = value
+        jsonschema.validate(instance=self.search_field, schema=SEARCH_FIELD_SCHEMA)
 
     def update_languages(self, children=None):
         """
@@ -1040,16 +1194,17 @@ class Asset(ObjectPermissionMixin,
 
         if children:
             languages = set(obj_languages)
-            children_languages = [child.summary.get('languages')
-                                  for child in children
-                                  if child.summary.get('languages')]
+            children_languages = [
+                child.summary.get('languages')
+                for child in children
+                if child.summary.get('languages')
+            ]
         else:
-            children_languages = list(self.children
-                                      .values_list('summary__languages',
-                                                   flat=True)
-                                      .exclude(Q(summary__languages=[]) |
-                                               Q(summary__languages=[None]))
-                                      .order_by())
+            children_languages = list(
+                self.children.values_list('summary__languages', flat=True)
+                .exclude(Q(summary__languages=[]) | Q(summary__languages=[None]))
+                .order_by()
+            )
 
         if children_languages:
             # Flatten `children_languages` to 1-dimension list.
@@ -1066,29 +1221,23 @@ class Asset(ObjectPermissionMixin,
         self.summary['languages'] = languages
         self.save(update_fields=['summary'])
 
-    def validate_advanced_features(self):
-        if self.advanced_features is None:
-            self.advanced_features = {}
-        jsonschema_validate(
-            instance=self.advanced_features,
-            schema=ADVANCED_FEATURES_PARAMS_SCHEMA,
-        )
-
     @property
-    def version__content_hash(self):
+    def version__content_hash(self) -> str | None:
         # Avoid reading the property `self.latest_version` more than once, since
         # it may execute a database query each time it's read
-        latest_version = self.latest_version
-        if latest_version:
+        if latest_version := self.latest_version:
             return latest_version.content_hash
 
+        return None
+
     @property
-    def version_id(self):
+    def version_id(self) -> str | None:
         # Avoid reading the property `self.latest_version` more than once, since
         # it may execute a database query each time it's read
-        latest_version = self.latest_version
-        if latest_version:
+        if latest_version := self.latest_version:
             return latest_version.uid
+
+        return None
 
     @property
     def version_number_and_date(self) -> str:
@@ -1101,14 +1250,6 @@ class Asset(ObjectPermissionMixin,
             count = count + 1
 
         return f'{count} {self.date_modified:(%Y-%m-%d %H:%M:%S)}'
-
-    def _get_additional_fields(self):
-        return parse_known_cols(self.known_cols)
-
-    def _get_engines(self):
-        for instance in self.get_advanced_feature_instances():
-            for key, val in instance.engines():
-                yield key, val
 
     def _populate_report_styles(self):
         default = self.report_styles.get(DEFAULT_REPORTS_KEY, {})
@@ -1129,6 +1270,13 @@ class Asset(ObjectPermissionMixin,
             SPECIFIC_REPORTS_KEY: specifieds,
             'kuid_names': kuids_to_variable_names,
         }
+
+    def _populate_search_field(self):
+        if self.owner:
+            self.update_search_field(
+                owner_username=self.owner.username,
+                organization_name=self.owner.organization.name,
+            )
 
     def _populate_summary(self):
         if self.content is None:
@@ -1160,8 +1308,6 @@ class Asset(ObjectPermissionMixin,
 
         if regenerate:
             snapshot = False
-            # Let's do some housekeeping
-            remove_asset_snapshots.delay(self.id)
         else:
             snapshot = AssetSnapshot.objects.filter(**snap_params).order_by(
                 '-date_created'
@@ -1194,7 +1340,7 @@ class Asset(ObjectPermissionMixin,
 
     def _update_partial_permissions(
         self,
-        user: 'auth.User',
+        user: 'settings.AUTH_USER_MODEL',
         perm: str,
         remove: bool = False,
         partial_perms: Optional[dict] = None,
@@ -1243,7 +1389,13 @@ class Asset(ObjectPermissionMixin,
             # Because of the unique constraint, there should be only
             # one record that matches this query.
             # We don't look for record existence to avoid extra query.
-            self.asset_partial_permissions.filter(user_id=user.pk).delete()
+            deleted, _ = self.asset_partial_permissions.filter(user_id=user.pk).delete()
+            if deleted > 0:
+                post_remove_partial_perms.send(
+                    sender=self.__class__,
+                    instance=self,
+                    user=user,
+                )
 
         if perm == PERM_PARTIAL_SUBMISSIONS:
 
@@ -1270,6 +1422,12 @@ class Asset(ObjectPermissionMixin,
                 asset_id=self.pk,
                 user_id=user.pk,
                 defaults={'permissions': new_partial_perms})
+            post_assign_partial_perm.send(
+                sender=self.__class__,
+                perms=new_partial_perms,
+                instance=self,
+                user=user,
+            )
 
             # There are no real partial permissions for 'add_submissions' but
             # 'change_submissions' implies it. So if 'add_submissions' is in the
@@ -1314,13 +1472,59 @@ class Asset(ObjectPermissionMixin,
         ):
             self.__deployment_data_copy = copy.deepcopy(
                 self._deployment_data)
+        if (
+            fields is None
+            and 'data_collector_group_id' not in self.get_deferred_fields()
+            or fields
+            and 'data_collector_group_id' in fields
+        ):
+            self._initial_data_collector_group_id = self.data_collector_group_id
+
+    def __normalize_settings_and_translations(self, content):
+        """
+        Ensures settings are a dictionary, preserves existing translations from the DB,
+        and prevents the 'null' language leak by suffixing plain strings with the
+        default language.
+        """
+        settings_data = content.get('settings', {})
+        if isinstance(settings_data, list):
+            flattened_settings = {}
+            for item in settings_data:
+                if isinstance(item, dict):
+                    flattened_settings.update(item)
+            content['settings'] = flattened_settings
+            settings_data = flattened_settings
+
+        # Get existing translations from DB so they don't disappear
+        existing_translations = []
+        if self.pk:
+            db_instance = Asset.objects.filter(pk=self.pk).only('content').first()
+            if db_instance and 'translations' in db_instance.content:
+                existing_translations = db_instance.content['translations']
+
+        # If payload is empty of translations but DB has them, restore them
+        if not content.get('translations') and existing_translations:
+            content['translations'] = existing_translations
+
+        # Suffix plain hint and label strings to the default language
+        default_lang = settings_data.get('default_language')
+        if default_lang:
+            for row in content.get('survey', []):
+                if 'hint' in row and isinstance(row['hint'], str):
+                    row[f'hint::{default_lang}'] = row.pop('hint')
+            # Only suffix plain labels for multilingual forms. On single-language
+            # forms, plain `label` is the expected format for an unnamed translation.
+            if len(existing_translations) > 1:
+                for row in content.get('survey', []) + content.get('choices', []):
+                    if 'label' in row and isinstance(row['label'], str):
+                        row[f'label::{default_lang}'] = row.pop('label')
 
 
 class UserAssetSubscription(models.Model):
     """ Record a user's subscription to a publicly-discoverable collection,
     i.e. one where the anonymous user has been granted `discover_asset` """
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE)
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     uid = KpiUidField(uid_prefix='b')
 
     class Meta:

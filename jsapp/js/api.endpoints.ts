@@ -1,9 +1,26 @@
 export const endpoints = {
+  ME: '/me/',
+  ENVIRONMENT: '/environment/',
+  /** Note: currently this endpoint only handles DELETE. Pass `{submission_root_uuids: string[]}` as payload. */
+  ATTACHMENT_BULK_URL: '/api/v2/assets/:asset_uid/attachments/bulk/',
+  /** Note: currently this endpoint only handles DELETE */
+  ATTACHMENT_DETAIL_URL: '/api/v2/assets/:asset_uid/attachments/:attachment_uid/',
+  ASSET_HISTORY: '/api/v2/assets/:asset_uid/history/',
+  ASSET_HISTORY_ACTIONS: '/api/v2/assets/:asset_uid/history/actions',
+  ASSET_HISTORY_EXPORT: '/api/v2/assets/:asset_uid/history/export/',
+  ASSETS_URL: '/api/v2/assets/',
+  ASSET_URL: '/api/v2/assets/:uid/',
+  ORG_ASSETS_URL: '/api/v2/organizations/:organization_id/assets/',
+  ME_URL: '/me/',
   PRODUCTS_URL: '/api/v2/stripe/products/',
   SUBSCRIPTION_URL: '/api/v2/stripe/subscriptions/',
-  ORGANIZATION_URL: '/api/v2/organizations/',
-  /** Expected parameters: price_id and organization_uid **/
+  ADD_ONS_URL: '/api/v2/stripe/addons/',
+  /** Expected parameters: price_id and organization_id **/
   CHECKOUT_URL: '/api/v2/stripe/checkout-link',
-  /** Expected parameter: organization_uid  **/
+  /** Expected parameter: organization_id  **/
   PORTAL_URL: '/api/v2/stripe/customer-portal',
-};
+  PROJECT_HISTORY_LOGS: '/api/v2/project-history-logs/',
+  LOGOUT_ALL: '/logout-all/',
+  LANGUAGES_LIST_URL: '/api/v2/languages/',
+  LANGUAGE_DETAIL_URL: '/api/v2/languages/:language_id/',
+} as const

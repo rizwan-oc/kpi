@@ -20,22 +20,27 @@ do ->
       it 'has a label attribute', ->
         $icons.each (icon) ->
           expect(icon.get('label')).toBeDefined()
+        return
 
       it 'has an iconClassName attribute', ->
         $icons.each (icon) ->
           expect(icon.get('iconClassName')).toBeDefined()
+        return
 
       it 'has an iconClassNameLocked attribute', ->
         $icons.each (icon) ->
           expect(icon.get('iconClassNameLocked')).toBeDefined()
+        return
 
       it 'has an id attribute', ->
         $icons.each (icon) ->
           expect(icon.get('id')).toBeDefined()
+        return
 
       it 'has a grouping attribute', ->
         $icons.each (icon) ->
           expect(icon.get('grouping')).toBeDefined()
+        return
 
     ###
     # CSS class naming conventions
@@ -44,17 +49,20 @@ do ->
       it 'iconClassName starts with "k-icon k-icon-"', ->
         $icons.each (icon) ->
           expect(icon.get('iconClassName').indexOf('k-icon k-icon-')).toBe(0)
+        return
 
       it 'iconClassNameLocked ends with "-lock"', ->
         $icons.each (icon) ->
           lockedClass = icon.get('iconClassNameLocked')
           expect(lockedClass.slice(-5)).toBe('-lock')
+        return
 
       it 'iconClassNameLocked is derived from iconClassName', ->
         $icons.each (icon) ->
           base = icon.get('iconClassName')
           locked = icon.get('iconClassNameLocked')
           expect(locked).toBe(base + '-lock')
+        return
 
     ###
     # Grouping rows
@@ -209,6 +217,7 @@ do ->
         groups = $icons.grouped()
         for row in groups
           expect(Array.isArray(row)).toBe(true)
+        return
 
       it 'first row contains the select_one icon', ->
         groups = $icons.grouped()

@@ -1,13 +1,27 @@
 -r requirements.in
 
 Fabric
-coverage
-coveralls
-ipython
+coverage<7  # temporary 20260226
+coveralls<4  # temporary 20260226
+ddt
+ipython<9  # temporary 20260226
 mock
 model-bakery
 mongomock
-pytest
-pytest-cov
+pytest<9  # temporary 20260226
+pytest-cov<6  # temporary 20260226
 pytest-django
 pytest-env
+pytest-xdist
+fakeredis
+freezegun
+
+# KoboCAT
+httmock
+simplejson
+
+# Formatter and linters
+ruff
+flake8
+flake8-quotes
+darker[isort]==2.1.1

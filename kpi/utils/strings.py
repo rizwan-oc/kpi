@@ -1,4 +1,3 @@
-# coding: utf-8
 import base64
 
 
@@ -10,3 +9,12 @@ def to_str(obj):
     if isinstance(obj, bytes):
         return obj.decode()
     return obj
+
+
+def split_lines_to_list(value: str) -> list:
+    values = value.strip().split('\n')
+    return [ip.strip() for ip in values if ip.strip()]
+
+
+def to_bool(str_: str) -> bool:
+    return str(str_).lower() in ('true', '1')

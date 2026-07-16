@@ -1,24 +1,26 @@
-# coding: utf-8
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Union
 
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.http import Http404
 from rest_framework import exceptions, permissions
+from rest_framework.permissions import IsAuthenticated as DRFIsAuthenticated
 
 from kpi.constants import (
     PERM_ADD_SUBMISSIONS,
     PERM_CHANGE_METADATA_ASSET,
+    PERM_CHANGE_SUBMISSIONS,
     PERM_PARTIAL_SUBMISSIONS,
     PERM_VIEW_ASSET,
     PERM_VIEW_SUBMISSIONS,
 )
-from kpi.models.asset import Asset
+from kpi.exceptions import DeploymentNotFound
+from kpi.mixins.validation_password_permission import ValidationPasswordPermissionMixin
+from kpi.models.asset import Asset, AssetSnapshot
 from kpi.utils.object_permission import get_database_user
-from kpi.utils.project_views import (
-    user_has_project_view_asset_perm,
-)
+from kpi.utils.project_views import user_has_project_view_asset_perm
 
 
 # FIXME: Move to `object_permissions` module.
@@ -81,7 +83,9 @@ class BaseAssetNestedObjectPermission(permissions.BasePermission):
             return cls._get_asset(view)
 
     def _get_user_permissions(
-        self, object_: Union['kpi.Asset', 'kpi.Collection'], user: 'auth.User'
+        self,
+        object_: Union['kpi.Asset', 'kpi.Collection'],
+        user: settings.AUTH_USER_MODEL,
     ) -> list[str]:
         """
         Returns a list of `user`'s permission for `asset`
@@ -111,7 +115,7 @@ class BaseAssetNestedObjectPermission(permissions.BasePermission):
         perms = [perm % kwargs for perm in perm_list]
         # Because `ObjectPermissionMixin.get_perms()` returns codenames only,
         # remove the `app_label` prefix before returning
-        return [perm.replace("{}.".format(app_label), "") for perm in perms]
+        return [perm.replace('{}.'.format(app_label), '') for perm in perms]
 
     def has_object_permission(self, request, view, obj):
         # Because authentication checks has already executed via
@@ -119,16 +123,29 @@ class BaseAssetNestedObjectPermission(permissions.BasePermission):
         return True
 
 
-class AssetPermission(permissions.DjangoObjectPermissions):
+def user_can_modify_advanced_features(asset, user, request):
+    if list(request.data.keys()) != ['advanced_features']:
+        return False
+    if asset.has_perm(user, PERM_CHANGE_SUBMISSIONS):
+        return True
+
+
+class AssetPermission(
+    ValidationPasswordPermissionMixin, permissions.DjangoObjectPermissions
+):
 
     # Setting this to False allows real permission checking on AnonymousUser.
     # With the default of True, anonymous requests are categorically rejected.
     authenticated_users_only = False
 
-    perms_map = permissions.DjangoObjectPermissions.perms_map.copy()
+    perms_map = deepcopy(permissions.DjangoObjectPermissions.perms_map)
     perms_map['GET'] = ['%(app_label)s.view_%(model_name)s']
     perms_map['OPTIONS'] = perms_map['GET']
     perms_map['HEAD'] = perms_map['GET']
+
+    def has_permission(self, request, view):
+        self.validate_password(request)
+        return super().has_permission(request=request, view=view)
 
     def has_object_permission(self, request, view, obj):
 
@@ -139,8 +156,9 @@ class AssetPermission(permissions.DjangoObjectPermissions):
         method = request._request.method
         if (
             method == 'PATCH'
-            and user_has_project_view_asset_perm(
-                obj, user, PERM_CHANGE_METADATA_ASSET
+            and (
+                user_has_project_view_asset_perm(obj, user, PERM_CHANGE_METADATA_ASSET)
+                or user_can_modify_advanced_features(obj, user, request)
             )
         ) or (
             method == 'GET'
@@ -151,7 +169,9 @@ class AssetPermission(permissions.DjangoObjectPermissions):
         return super().has_object_permission(request, view, obj)
 
 
-class AssetNestedObjectPermission(BaseAssetNestedObjectPermission):
+class AssetNestedObjectPermission(
+    ValidationPasswordPermissionMixin, BaseAssetNestedObjectPermission
+):
     """
     Permissions for nested objects of Asset.
     Only owner and managers can have write access on these objects.
@@ -172,6 +192,7 @@ class AssetNestedObjectPermission(BaseAssetNestedObjectPermission):
     perms_map['DELETE'] = perms_map['POST']
 
     def has_permission(self, request, view):
+        self.validate_password(request)
         if not request.user:
             return False
         elif request.user.is_superuser:
@@ -211,6 +232,20 @@ class AssetNestedObjectPermission(BaseAssetNestedObjectPermission):
         raise Http404
 
 
+class AssetAdvancedFeaturesPermission(AssetNestedObjectPermission):
+    """
+    Owner, managers and editors can write.
+        - Reads need 'view_asset' permission
+        - Writes need 'change_submissions' permission
+    """
+
+    perms_map = deepcopy(AssetNestedObjectPermission.perms_map)
+    perms_map['POST'] = ['%(app_label)s.change_submissions']
+    perms_map['PUT'] = perms_map['POST']
+    perms_map['PATCH'] = perms_map['POST']
+    perms_map['DELETE'] = perms_map['POST']
+
+
 class AssetEditorPermission(AssetNestedObjectPermission):
     """
     Owner, managers and editors can write.
@@ -218,7 +253,8 @@ class AssetEditorPermission(AssetNestedObjectPermission):
         - Reads need 'view_asset' permission
         - Writes need 'change_asset' permission
     """
-    perms_map = AssetNestedObjectPermission.perms_map.copy()
+
+    perms_map = deepcopy(AssetNestedObjectPermission.perms_map)
     perms_map['POST'] = ['%(app_label)s.change_asset']
     perms_map['PUT'] = perms_map['POST']
     perms_map['PATCH'] = perms_map['POST']
@@ -244,25 +280,50 @@ class AssetEditorSubmissionViewerPermission(AssetNestedObjectPermission):
     }
 
 
-class AssetExportSettingsPermission(AssetNestedObjectPermission):
-    perms_map = {
-        'GET': ['%(app_label)s.view_submissions'],
-        'POST': ['%(app_label)s.manage_asset'],
-    }
-
-    perms_map['OPTIONS'] = perms_map['GET']
-    perms_map['HEAD'] = perms_map['GET']
-    perms_map['PUT'] = perms_map['POST']
-    perms_map['PATCH'] = perms_map['POST']
-    perms_map['DELETE'] = perms_map['POST']
-
-
 class AssetPermissionAssignmentPermission(AssetNestedObjectPermission):
 
-    perms_map = AssetNestedObjectPermission.perms_map.copy()
+    perms_map = deepcopy(AssetNestedObjectPermission.perms_map)
     # This change allows users with `view_asset` to permissions to
     # remove themselves from an asset that has been shared with them
     perms_map['DELETE'] = perms_map['GET']
+
+
+class AssetSnapshotPermission(AssetPermission):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Do NOT mutate `perms_map` from the parent class! Doing so will affect
+        # *every* instance of `DjangoObjectPermissions` and all its subclasses
+        app_label = Asset._meta.app_label
+        model_name = Asset._meta.model_name
+
+        self.perms_map = deepcopy(self.perms_map)
+        for action in self.perms_map.keys():
+            for idx, perm in enumerate(self.perms_map[action]):
+                self.perms_map[action][idx] = perm % {
+                    'app_label': app_label,
+                    'model_name': model_name,
+                }
+
+    def has_permission(self, request, view):
+        self.validate_password(request)
+
+        # Allow anonymous users to send POST requests to preview public forms.
+        # Object-level access control is handled by the serializer, ensuring
+        # that only public forms can be accessed or previewed.
+        if request.method == 'POST' and view.action == 'create':
+            return True
+
+        return super().has_permission(request, view)
+
+    def has_object_permission(self, request, view, obj):
+        if view.action == 'submission' or (
+            view.action == 'retrieve' and request.accepted_renderer.format == 'xml'
+        ):
+            return True
+
+        asset = obj.asset
+        return super().has_object_permission(request, view, asset)
 
 
 class AssetVersionReadOnlyPermission(AssetNestedObjectPermission):
@@ -272,6 +333,13 @@ class AssetVersionReadOnlyPermission(AssetNestedObjectPermission):
     perms_map = {
         'GET': ['%(app_label)s.view_asset'],
     }
+
+
+class IsAuthenticated(ValidationPasswordPermissionMixin, DRFIsAuthenticated):
+
+    def has_permission(self, request, view):
+        self.validate_password(request)
+        return super().has_permission(request=request, view=view)
 
 
 # FIXME: Name is no longer accurate.
@@ -292,7 +360,8 @@ class PostMappedToChangePermission(IsOwnerOrReadOnly):
     Maps POST requests to the change_model permission instead of DRF's default
     of add_model
     """
-    perms_map = IsOwnerOrReadOnly.perms_map.copy()
+
+    perms_map = deepcopy(IsOwnerOrReadOnly.perms_map)
     perms_map['POST'] = ['%(app_label)s.change_%(model_name)s']
 
 
@@ -322,7 +391,7 @@ class SubmissionPermission(AssetNestedObjectPermission):
     Permissions for submissions.
     """
 
-    MODEL_NAME = "submissions"  # Hard-code `model_name` to match permissions
+    MODEL_NAME = 'submissions'  # Hard-code `model_name` to match permissions
 
     perms_map = {
         'GET': ['%(app_label)s.view_%(model_name)s'],
@@ -333,7 +402,7 @@ class SubmissionPermission(AssetNestedObjectPermission):
         'DELETE': ['%(app_label)s.delete_%(model_name)s'],
     }
 
-    def _get_user_permissions(self, asset: Asset, user: 'auth.User') -> list:
+    def _get_user_permissions(self, asset: Asset, user: 'settings.AUTH_USER_MODEL') -> list:
         """
         Overrides parent method to include partial permissions (which are
         specific to submissions)
@@ -352,6 +421,37 @@ class SubmissionPermission(AssetNestedObjectPermission):
                 ))
 
         return user_permissions
+
+
+class AdvancedSubmissionPermission(SubmissionPermission):
+    """
+    Regular `SubmissionPermission` maps POST to `add_submissions`, but
+    `change_submissions` should be required here
+    """
+
+    perms_map = deepcopy(SubmissionPermission.perms_map)
+    perms_map['POST'] = ['%(app_label)s.change_%(model_name)s']
+
+    def _get_user_permissions(
+        self, asset: Asset, user: 'settings.AUTH_USER_MODEL'
+    ) -> list:
+        """
+        Overrides parent method to exclude partial permissions
+        """
+
+        return super(SubmissionPermission, self)._get_user_permissions(asset, user)
+
+
+class AttachmentDeletionPermission(SubmissionPermission):
+    """
+    Permissions for deleting attachments.
+    To delete an attachment, the user must have permission to edit the submission.
+    """
+
+    perms_map = {
+        'GET': ['%(app_label)s.view_%(model_name)s'],
+        'DELETE': ['%(app_label)s.change_%(model_name)s'],
+    }
 
 
 class AssetExportSettingsPermission(SubmissionPermission):
@@ -397,14 +497,19 @@ class EditLinkSubmissionPermission(SubmissionPermission):
 
 
 class EditSubmissionPermission(EditLinkSubmissionPermission):
-
+    # TODO: Refactor this so we don't have to check for the object twice
     def has_permission(self, request, view):
         try:
             return super().has_permission(request, view)
         except Http404:
-            # When we receive a 404, we want to force a 401 to let the user
-            # log in with different credentials. Enketo Express will prompt
-            # the credential form only if it receives a 401.
+            uid = request.parser_context['kwargs']['uid_asset_snapshot']
+            # Is this a real 404 (object does not exist)? If so, raise it
+            if not AssetSnapshot.objects.filter(uid=uid).exists():
+                raise
+
+            # If we forced a 404 for permissions issues, we want to
+            # change it to a 401 to allow the user log in with different credentials.
+            # Enketo Express will prompt the credential form only if it receives a 401.
             raise exceptions.AuthenticationFailed()
 
 
@@ -444,20 +549,24 @@ class XMLExternalDataPermission(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
         """
         The responsibility for securing data behove to the owner of the
-        asset `obj` by requiring authentication on their form.
-        Otherwise, the paired source data may be exposed to anyone
+        asset `obj` (the child project) by requiring authentication on
+        their form.
+        Otherwise, the paired source (the parent project) data may be exposed
+        to anyone.
         """
-        # Check whether `asset` owner's account requires authentication:
+        # Check whether the project requires authentication
         try:
-            require_auth = obj.asset.owner.extra_details.data['require_auth']
-        except (User.extra_details.RelatedObjectDoesNotExist, KeyError):
-            require_auth = False
+            require_auth = obj.asset.deployment.xform.require_auth
+        except (DeploymentNotFound, AttributeError):
+            require_auth = True
+
+        real_user = request.user
 
         # If authentication is required, `request.user` should have
         # 'add_submission' permission on `obj`
         if (
             require_auth
-            and not obj.asset.has_perm(request.user, PERM_ADD_SUBMISSIONS)
+            and not obj.asset.has_perm(real_user, PERM_ADD_SUBMISSIONS)
         ):
             raise Http404
 

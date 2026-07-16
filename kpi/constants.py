@@ -1,8 +1,16 @@
 # coding: utf-8
-SUBMISSION_FORMAT_TYPE_XML = "xml"
-SUBMISSION_FORMAT_TYPE_JSON = "json"
+SUBMISSION_FORMAT_TYPE_XML = 'xml'
+SUBMISSION_FORMAT_TYPE_JSON = 'json'
 
 GEO_QUESTION_TYPES = ('geopoint', 'geotrace', 'geoshape')
+ATTACHMENT_QUESTION_TYPES = (
+    'audit',
+    'image',
+    'audio',
+    'video',
+    'file',
+    'background-audio',
+)
 
 ASSET_TYPE_TEXT = 'text'
 ASSET_TYPE_EMPTY = 'empty'
@@ -38,9 +46,9 @@ ASSET_TYPES_WITH_CONTENT = [
     # notably not ASSET_TYPE_COLLECTION
 ]
 
-CLONE_ARG_NAME = "clone_from"
-CLONE_FROM_VERSION_ID_ARG_NAME = "clone_from_version_id"
-COLLECTION_CLONE_FIELDS = {"name"}
+CLONE_ARG_NAME = 'clone_from'
+CLONE_FROM_VERSION_ID_ARG_NAME = 'clone_from_version_id'
+COLLECTION_CLONE_FIELDS = {'name'}
 
 # Types are declared in `kpi.models.assets.ASSET_TYPES`.
 # These values correspond to index 0 of each tuple of ASSET_TYPES
@@ -53,20 +61,28 @@ CLONE_COMPATIBLE_TYPES = {
     ASSET_TYPE_TEMPLATE: [ASSET_TYPE_SURVEY, ASSET_TYPE_TEMPLATE]
 }
 
-ASSET_TYPE_ARG_NAME = "asset_type"
+DEFAULT_SURVEY_NAME = '__kobo_default_survey_name_value__'
 
-# Main app label for shadow models.
-SHADOW_MODEL_APP_LABEL = 'shadow_model'
+ASSET_TYPE_ARG_NAME = 'asset_type'
+
 # List of app labels that need to read/write data from KoBoCAT database
 # Useful in `db_routers.py`
 SHADOW_MODEL_APP_LABELS = [
-    SHADOW_MODEL_APP_LABEL,
     'superuser_stats',
 ]
 
+SHARED_APP_LABELS = [
+    'auth',
+    'contenttypes',
+    'kobo_auth',
+    'sessions',
+    'taggit',
+]
+
+
 # List of nested attributes which bypass 'dots' encoding
 NESTED_MONGO_RESERVED_ATTRIBUTES = [
-    "_validation_status",
+    '_validation_status',
 ]
 
 PREFIX_PARTIAL_PERMS = 'partial_'
@@ -109,6 +125,84 @@ ASSET_SEARCH_DEFAULT_FIELD_LOOKUPS = [
     'summary__icontains',
     'tags__name__icontains',
     'uid__icontains',
+]
+
+SKIP_HEAVY_MIGRATIONS_GUIDANCE = (
+    """
+    This migration might take a while. If it is too slow, you may want to
+    re-run migrations with SKIP_HEAVY_MIGRATIONS=True and apply this one
+    manually from the django shell.
+    """
+)
+
+LIMIT_HOURS_23 = 82800
+
+ACCESS_LOG_LOGINAS_AUTH_TYPE = 'django-loginas'
+ACCESS_LOG_UNKNOWN_AUTH_TYPE = 'unknown'
+ACCESS_LOG_SUBMISSION_AUTH_TYPE = 'submission'
+ACCESS_LOG_SUBMISSION_GROUP_AUTH_TYPE = 'submission-group'
+ACCESS_LOG_AUTHORIZED_APP_TYPE = 'authorized-application'
+
+PROJECT_HISTORY_LOG_PROJECT_SUBTYPE = 'project'
+PROJECT_HISTORY_LOG_PERMISSION_SUBTYPE = 'permission'
+PROJECT_HISTORY_LOG_METADATA_FIELD_NEW = 'new'
+PROJECT_HISTORY_LOG_METADATA_FIELD_OLD = 'old'
+PROJECT_HISTORY_LOG_METADATA_FIELD_ADDED = 'added'
+PROJECT_HISTORY_LOG_METADATA_FIELD_REMOVED = 'removed'
+
+API_NAMESPACES = {
+    'v1': None,
+    'v2': 'api_v2',
+    'default': 'api_v2',
+}
+
+SAFE_INLINE_MIMETYPES = {
+    # images (no svg)
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/avif',
+    'image/gif',
+    'image/bmp',
+    'image/x-ms-bmp',
+    'image/tiff',
+    'image/jp2',
+    'image/x-icon',
+    'image/vnd.wap.wbmp',
+    # audio
+    'audio/mpeg',
+    'audio/mp3',
+    'audio/mp4',
+    'audio/aac',
+    'audio/aac-adts',
+    'audio/m4a',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/aiff',
+    'audio/x-aiff',
+    'audio/ogg',
+    'audio/flac',
+    'audio/webm',
+    'audio/amr',
+    'audio/amr-wb',
+    'audio/vnd.wave',
+    # video
+    'video/mp4',
+    'video/webm',
+    'video/ogg',
+    'video/quicktime',
+    'video/mov',
+    'video/x-m4v',
+    'video/mpeg',
+    'video/3gpp',
+    'video/x-msvideo',
+    'video/x-ms-wmv',
+}
+
+# MIME types not supported inline by browsers, fallback to JPEG conversion
+UNSUPPORTED_INLINE_MIMETYPES = [
+    'image/heic',
+    'image/heif',
 ]
 
 # OpenClinica

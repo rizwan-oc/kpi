@@ -5,7 +5,12 @@ from rest_framework import exceptions, status, viewsets
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 
+from kobo.apps.openrosa.libs.utils.viewer_tools import (
+    get_client_ip,
+    get_human_readable_client_user_agent,
+)
 from kpi.models import ImportTask
+from kpi.models.import_export_task import ImportExportStatusChoices
 from kpi.serializers import ImportTaskListSerializer, ImportTaskSerializer
 from kpi.tasks import import_in_background
 from kpi.utils.strings import to_str
@@ -37,6 +42,8 @@ class ImportTaskViewSet(viewsets.ReadOnlyModelViewSet):
             # NOTE: 'filename' here comes from 'name' (!) in the POST data
             'filename': request.POST.get('name', None),
             'destination': request.POST.get('destination', None),
+            'ip_address': get_client_ip(request),
+            'source': get_human_readable_client_user_agent(request),
         }
         if 'base64Encoded' in request.POST:
             encoded_str = request.POST['base64Encoded']
@@ -53,12 +60,15 @@ class ImportTaskViewSet(viewsets.ReadOnlyModelViewSet):
                                                 data=itask_data)
         # Have Celery run the import in the background
         import_in_background.delay(import_task_uid=import_task.uid)
-        return Response({
-            'uid': import_task.uid,
-            'url': reverse(
-                'importtask-detail',
-                kwargs={'uid': import_task.uid},
-                request=request),
-            'status': ImportTask.PROCESSING
-        }, status.HTTP_201_CREATED)
-
+        return Response(
+            {
+                'uid': import_task.uid,
+                'url': reverse(
+                    'importtask-detail',
+                    kwargs={'uid': import_task.uid},
+                    request=request,
+                ),
+                'status': ImportExportStatusChoices.PROCESSING,
+            },
+            status.HTTP_201_CREATED,
+        )

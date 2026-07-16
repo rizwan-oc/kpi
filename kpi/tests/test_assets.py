@@ -4,20 +4,35 @@ import datetime
 import json
 from collections import OrderedDict
 from copy import deepcopy
+from unittest.mock import patch
 
 import openpyxl
-from django.contrib.auth.models import User, AnonymousUser
-from django.test import TestCase
+from django.contrib.auth.models import AnonymousUser
+from django.test import TestCase, override_settings
 from django.urls import reverse
-from rest_framework import serializers
+from rest_framework import serializers, status
 
+from kobo.apps.data_collectors.models import DataCollector, DataCollectorGroup
+from kobo.apps.kobo_auth.shortcuts import User
+from kobo.apps.openrosa.apps.logger.models import XForm
+from kobo.apps.openrosa.apps.logger.xform_instance_parser import XFormInstanceParser
+from kobo.apps.organizations.models import Organization
+from kobo.apps.organizations.tasks import transfer_member_data_ownership_to_org
+from kobo.apps.organizations.tests.test_organizations_api import (
+    BaseOrganizationAssetApiTestCase,
+)
+from kobo.apps.project_ownership.models import InviteStatusChoices
+from kobo.apps.project_ownership.models.invite import Invite
+from kobo.apps.project_ownership.models.transfer import Transfer
 from kpi.constants import (
-    ASSET_TYPE_SURVEY,
     ASSET_TYPE_COLLECTION,
+    ASSET_TYPE_SURVEY,
+    PERM_ADD_SUBMISSIONS,
     PERM_CHANGE_ASSET,
     PERM_MANAGE_ASSET,
     PERM_VIEW_ASSET,
 )
+from kpi.deployment_backends.mock_backend import MockDeploymentBackend
 from kpi.models import Asset, ImportTask
 from kpi.utils.object_permission import get_all_objects_for_user
 
@@ -259,6 +274,107 @@ class AssetContentTests(AssetsTestCase):
         except:
             self.assertEqual(self.asset.content.get('translations'), ['lang1', None])
 
+    def test_fix_unnamed_language_leak_on_hint_addition(self):
+        """
+        Verifies that adding a hint to an undeployed form with multiple languages
+        does not create an unnamed (None) language and maintains correct translations.
+        """
+        # Setup with 2 languages
+        languages = ['English (en)', 'French (fr)']
+        initial_content = {
+            'schema': '1',
+            'survey': [
+                {'name': 'start', 'type': 'start', '$kuid': 'DmDARxejl'},
+                {'name': 'end', 'type': 'end', '$kuid': 'ZuYDDLIlj'},
+                {
+                    'name': 'q1',
+                    'type': 'text',
+                    'label': ['Question 1', 'Question 1 FR'],
+                    '$kuid': 'abc123',
+                },
+            ],
+            'settings': {'default_language': 'English (en)'},
+            'translations': languages,
+            'translated': ['label'],
+        }
+
+        asset = Asset.objects.create(
+            owner=self.user, asset_type='survey', content=initial_content
+        )
+
+        # Simulate adding a hint to the question
+        builder_payload = deepcopy(asset.content)
+        if 'hint' not in builder_payload['translated']:
+            builder_payload['translated'].append('hint')
+        builder_payload['survey'][2]['hint'] = 'This is a new hint'
+
+        asset.content = builder_payload
+        asset.save()
+        asset.refresh_from_db()
+
+        # Verify translations: Ensure they weren't removed or added to (no 'None')
+        self.assertEqual(asset.content['translations'], ['English (en)', 'French (fr)'])
+        self.assertEqual(len(asset.content['translations']), 2)
+        self.assertNotIn(None, asset.content['translations'])
+
+        self.assertIn('hint', asset.content['translated'])
+
+    def test_fix_unnamed_language_leak_on_label_save(self):
+        """
+        Verifies that saving a multilingual form with plain `label` keys (as sent
+        by the Formbuilder when translations_0 is missing from state.asset.content
+        after a background re-fetch) does not create an unnamed (None) language.
+        """
+        languages = ['English (en)', 'French (fr)']
+        initial_content = {
+            'schema': '1',
+            'survey': [
+                {'name': 'start', 'type': 'start'},
+                {'name': 'end', 'type': 'end'},
+                {
+                    'name': 'q1',
+                    'type': 'text',
+                    'label': ['My question', 'Ma question'],
+                },
+            ],
+            'settings': {'default_language': 'English (en)'},
+            'translations': languages,
+            'translated': ['label'],
+        }
+
+        asset = Asset.objects.create(
+            owner=self.user, asset_type='survey', content=initial_content
+        )
+
+        # Simulate a Formbuilder save where translations_0 was missing from
+        # state.asset.content (background re-fetch scenario). The frontend sends
+        # plain `label` keys instead of `label::English (en)`.
+        flat_payload = {
+            'survey': [
+                {'name': 'start', 'type': 'start'},
+                {'name': 'end', 'type': 'end'},
+                {
+                    'name': 'q1',
+                    'type': 'text',
+                    'label': 'Modified question',
+                    'label::French (fr)': 'Question modifiée',
+                },
+            ],
+            'choices': [],
+            'settings': [{'default_language': 'English (en)'}],
+        }
+
+        asset.content = flat_payload
+        asset.save()
+        asset.refresh_from_db()
+
+        assert asset.content['translations'] == ['English (en)', 'French (fr)']
+        assert None not in asset.content['translations']
+        q1 = next(
+            r for r in asset.content['survey'] if r.get('name') == 'q1'
+        )
+        assert q1['label'] == ['Modified question', 'Question modifiée']
+
     def test_flatten_empty_relevant(self):
         content = self._wrap_field('relevant', [])
         a1 = Asset.objects.create(content=content, asset_type='survey')
@@ -342,31 +458,36 @@ class AssetContentTests(AssetsTestCase):
         workbook = openpyxl.load_workbook(xlsx_io)
 
         survey_sheet = workbook['survey']
+        survey_headers = [cell.value for cell in survey_sheet[1]]
         # `versioned=True` should add a calculate question to the last row.
         # The calculation (version uid) changes on each run, so don't look past
         # the first two columns (type and name)
         xls_version_row = [
             cell.value for cell in survey_sheet[survey_sheet.max_row]]
         self.assertEqual(xls_version_row[:2], ['calculate', '__version__'])
-        # The next-to-last row should have the note question from `append`
+        # The next-to-last row should be the note question from `append`
         xls_note_row = [
             cell.value for cell in survey_sheet[survey_sheet.max_row - 1]]
-        expected_note_row = list(append['survey'][0].values())
-        # Slice the result to discard any extraneous empty cells
-        self.assertEqual(
-            xls_note_row[:len(expected_note_row)], expected_note_row)
+        self.assertEqual(xls_note_row[0], 'note')
+        # Find the label column by header name (OC adds extra survey columns)
+        label_col_idx = survey_headers.index('label')
+        self.assertEqual(xls_note_row[label_col_idx], 'wee')
 
         settings_sheet = workbook['settings']
-        # Next-to-last column should have `asdf` setting
-        xls_asdf_col = [row[1].value for row in settings_sheet.iter_rows(max_row=2)]
-        self.assertEqual(xls_asdf_col, ['asdf', 'jkl'])
-
-        # Last column should have `version` setting from `append`
-        xls_version_col = [row[2].value for row in settings_sheet.iter_rows(max_row=2)]
-        self.assertEqual(xls_version_col[0], 'version')
-        # first column should have `form_title` as asset name
-        xls_form_title_col = [row[0].value for row in settings_sheet.iter_rows(max_row=2)]
-        assert xls_form_title_col == ['form_title', self.asset.name or None]
+        settings_headers = [cell.value for cell in settings_sheet[1]]
+        settings_values = [
+            cell.value for cell in
+            list(settings_sheet.iter_rows(min_row=2, max_row=2))[0]
+        ]
+        # `asdf` setting should be present with the correct value
+        assert 'asdf' in settings_headers
+        self.assertEqual(settings_values[settings_headers.index('asdf')], 'jkl')
+        # `version` setting should be the last column (added after key ordering)
+        assert 'version' in settings_headers
+        assert settings_headers[-1] == 'version'
+        # `form_title` should be the first column with the asset name
+        assert settings_headers[0] == 'form_title'
+        assert settings_values[0] == (self.asset.name or None)
 
     def test_to_xlsx_io_includes_version_number_and_date(self):
         date_string = '2021-03-17 11:12:13'
@@ -374,49 +495,55 @@ class AssetContentTests(AssetsTestCase):
         xlsx_io = self.asset.to_xlsx_io(versioned=True)
         workbook = openpyxl.load_workbook(xlsx_io)
         settings_sheet = workbook['settings']
-        version_col = [cell.value for cell in settings_sheet[1]].index(
-            'version'
-        ) + 1
-        version_string = settings_sheet[version_col][1].value
+        # Find the 'version' column by header name (OC adds extra settings
+        # columns, so a fixed column index is not reliable)
+        settings_headers = [cell.value for cell in settings_sheet[1]]
+        assert 'version' in settings_headers, \
+            "settings sheet should have a 'version' column"
+        version_col_idx = settings_headers.index('version')
+        values_row = list(settings_sheet.iter_rows(min_row=2, max_row=2))[0]
+        version_string = list(values_row)[version_col_idx].value
         assert version_string == f'1 ({date_string})'
 
     def test_unique__version__field_on_import_with_version(self):
-            xlsx_io = self.asset.to_xlsx_io(versioned=True)
-            workbook = openpyxl.load_workbook(xlsx_io)
-            survey_sheet = workbook['survey']
-            xls_version_row = [
-                cell.value for cell in survey_sheet[survey_sheet.max_row]]
-            expected_row = [
-                'calculate',
-                '__version__',
-                None,
-                f"'{self.asset.latest_version.uid}'"
-            ]
-            current_version_id = self.asset.latest_version.uid
-            assert xls_version_row == expected_row
+        xlsx_io = self.asset.to_xlsx_io(versioned=True)
+        workbook = openpyxl.load_workbook(xlsx_io)
+        survey_sheet = workbook['survey']
+        # Get headers from row 1 to find the calculation column by name
+        # (OC adds extra survey columns, so a fixed index is not reliable)
+        survey_headers = [cell.value for cell in survey_sheet[1]]
+        calc_col_idx = survey_headers.index('calculation')
 
-            xlsx_io.seek(0)
-            # Replace XLSForm with new one which contains a row with the '__version__'
-            import_task = self._create_import_task(xlsx_io)
-            self.asset.refresh_from_db()
+        xls_version_row = [
+            cell.value for cell in survey_sheet[survey_sheet.max_row]]
+        current_version_id = self.asset.latest_version.uid
+        # Last survey row should be the __version__ calculate row
+        assert xls_version_row[0] == 'calculate'
+        assert xls_version_row[1] == '__version__'
+        assert xls_version_row[calc_col_idx] == f"'{current_version_id}'"
 
-            xlsx_io = self.asset.to_xlsx_io(versioned=True)
-            workbook = openpyxl.load_workbook(xlsx_io)
-            survey_sheet = workbook['survey']
-            xls_new_version_row = [
-                cell.value for cell in survey_sheet[survey_sheet.max_row]]
-            new_version_expected_row = [
-                'calculate',
-                '__version__',
-                None,
-                f"'{self.asset.latest_version.uid}'"
-            ]
-            # Ensure last row is '__version__' (not '_version_' or '_version_001_')
-            # and it equals the asset's latest version
-            assert current_version_id != self.asset.latest_version.uid
-            assert xls_new_version_row == new_version_expected_row
-            # clean-up
-            import_task.delete()
+        xlsx_io.seek(0)
+        # Replace XLSForm with new one which contains a row with the '__version__'
+        import_task = self._create_import_task(xlsx_io)
+        self.asset.refresh_from_db()
+
+        xlsx_io = self.asset.to_xlsx_io(versioned=True)
+        workbook = openpyxl.load_workbook(xlsx_io)
+        survey_sheet = workbook['survey']
+        survey_headers = [cell.value for cell in survey_sheet[1]]
+        calc_col_idx = survey_headers.index('calculation')
+
+        xls_new_version_row = [
+            cell.value for cell in survey_sheet[survey_sheet.max_row]]
+        # Ensure last row is '__version__' (not '_version_' or '_version_001_')
+        # and it equals the asset's latest version
+        assert current_version_id != self.asset.latest_version.uid
+        assert xls_new_version_row[0] == 'calculate'
+        assert xls_new_version_row[1] == '__version__'
+        assert xls_new_version_row[calc_col_idx] == \
+            f"'{self.asset.latest_version.uid}'"
+        # clean-up
+        import_task.delete()
 
     def _create_import_task(self, xlsx_file: bytes) -> ImportTask:
         encoded_xls = base64.b64encode(xlsx_file.read()).decode('utf-8')
@@ -426,7 +553,7 @@ class AssetContentTests(AssetsTestCase):
                 'base64Encoded': encoded_xls,
                 'destination': reverse(
                     'api_v2:asset-detail',
-                    kwargs={'uid': self.asset.uid},
+                    kwargs={'uid_asset': self.asset.uid},
                 ),
                 'filename': f'{self.asset.uid}.xlsx',
                 'assetUid': self.asset.uid,
@@ -684,8 +811,8 @@ class ShareAssetsTest(AssetsTestCase):
                                        self.asset_in_coll),
                          False)
 
-    ''' Try the previous tests again, but this time assign permissions to the
-    asset before assigning permissions to the collection. '''
+    """ Try the previous tests again, but this time assign permissions to the
+    asset before assigning permissions to the collection. """
 
     def test_user_change_asset_view_collection(self):
         self.test_user_view_collection_change_asset(asset_first=True)
@@ -776,5 +903,363 @@ class ShareAssetsTest(AssetsTestCase):
         self.asset.assign_perm(AnonymousUser(), PERM_VIEW_ASSET)
         # Check that both anonymous and `anotheruser` can view
         for user_obj in AnonymousUser(), self.anotheruser:
-            self.assertTrue(user_obj.has_perm(
-                PERM_VIEW_ASSET, self.asset))
+            self.assertTrue(user_obj.has_perm(PERM_VIEW_ASSET, self.asset))
+
+    def test_first_deployment_allows_anonymous_access(self):
+        asset = Asset.objects.create(asset_type=ASSET_TYPE_SURVEY, owner=self.user)
+        asset.assign_perm(AnonymousUser(), PERM_ADD_SUBMISSIONS)
+        asset.deploy(backend='mock', active=True)
+        assert asset.deployment.xform.require_auth is False
+
+
+class TestAssetNameSettingHandling(AssetsTestCase):
+    """
+    Tests for the 'name' setting in the asset content
+    """
+    def test_asset_name_matches_instance_root(self):
+        """
+        Test if 'name' setting is provided, it should match with the root node.
+        """
+        content = {
+            'survey': [
+                {
+                    'type': 'text',
+                    'name': 'some_text',
+                    'label': 'Enter some text',
+                },
+            ],
+            'settings': {'name': 'custom_root_node_name'}
+        }
+
+        # Create and deploy the asset
+        asset = Asset.objects.create(
+            owner=User.objects.get(username=self.user),
+            content=content,
+            asset_type=ASSET_TYPE_SURVEY
+        )
+        asset.deploy(backend='mock', active=True)
+
+        # Get the deployed XForm and parse it
+        xform = XForm.objects.get(id_string=asset.uid)
+        parser = XFormInstanceParser(xform.xml, xform.data_dictionary())
+
+        # Access the first child element of the <instance> node
+        instance_node = parser.get_root_node().getElementsByTagName('instance')[0]
+        root_element = instance_node.firstChild
+
+        # Assert that the name setting matches the root node name
+        assert root_element.nodeName == 'custom_root_node_name'
+
+    def test_asset_without_name_setting(self):
+        """
+        Test if 'name' setting is not provided, the root node should fall back
+        to asset UID
+        """
+        content = {
+            'survey': [
+                {
+                    'type': 'text',
+                    'name': 'some_text',
+                    'label': 'Enter some text',
+                },
+            ],
+            # No 'name' setting provided in this case
+        }
+
+        # Create and deploy the asset
+        asset = Asset.objects.create(
+            owner=User.objects.get(username=self.user),
+            content=content,
+            asset_type=ASSET_TYPE_SURVEY
+        )
+        asset.deploy(backend='mock', active=True)
+
+        # Get the deployed XForm and parse it
+        xform = XForm.objects.get(id_string=asset.uid)
+        parser = XFormInstanceParser(xform.xml, xform.data_dictionary())
+
+        # Access the first child element of the <instance> node
+        instance_node = parser.get_root_node().getElementsByTagName('instance')[0]
+        root_element = instance_node.firstChild
+
+        # Assert that the root node name is the asset.uid
+        assert root_element.nodeName == asset.uid
+
+
+class AssetSearchFieldTests(TestCase):
+
+    def setUp(self):
+        self.someuser = User.objects.create(username='someuser')
+        self.anotheruser = User.objects.create(username='anotheruser')
+
+    def test_search_fields_populated_on_asset_creation(self):
+        asset = Asset.objects.create(owner=self.someuser)
+
+        self.assertEqual(asset.search_field['owner_username'], self.someuser.username)
+        self.assertEqual(
+            asset.search_field['organization_name'], self.someuser.organization.name
+        )
+
+    def test_search_fields_updated_on_organization_save(self):
+        asset = Asset.objects.create(owner=self.someuser)
+        org_name = asset.search_field['organization_name']
+        organization = Organization.objects.get(name=org_name)
+
+        organization.name = 'Updated Organization'
+        organization.save()
+
+        asset.refresh_from_db()
+        self.assertEqual(
+            asset.search_field['organization_name'], 'Updated Organization'
+        )
+
+    def test_search_fields_updated_on_project_ownership_transfer(self):
+        asset = Asset.objects.create(owner=self.someuser)
+
+        invite = Invite.objects.create(sender=self.someuser, recipient=self.anotheruser)
+        transfer = Transfer.objects.create(invite=invite, asset=asset)
+        transfer.transfer_project()
+
+        asset.refresh_from_db()
+        self.assertEqual(
+            asset.search_field['owner_username'], self.anotheruser.username
+        )
+        self.assertEqual(
+            asset.search_field['organization_name'], self.anotheruser.organization.name
+        )
+
+
+class TestAssetExcludedFromProjectsListFlag(BaseOrganizationAssetApiTestCase):
+    """
+    Tests for the `is_excluded_from_projects_list` flag on assets
+
+    ToDo: Modify this test to use the org invitations API once it's merged to main
+    """
+    def setUp(self):
+        super().setUp()
+        self.organization = self.someuser.organization
+        self.org_owner = self.someuser
+        self.external_user = self.bob
+        self.thirduser = User.objects.create_user(
+            username='thirduser', password='thirduser'
+        )
+        self.asset_list_url = reverse(self._get_endpoint('asset-list'))
+        self.asset_detail_url = lambda uid: reverse(
+            self._get_endpoint('asset-detail'),
+            kwargs={'uid_asset': uid}
+        )
+        self.invite_detail_url = lambda uid: reverse(
+            self._get_endpoint('project-ownership-invite-detail'),
+            kwargs={'uid_invite': uid}
+        )
+        self.org_assets_list_url = lambda org_id: reverse(
+            self._get_endpoint('organizations-assets'),
+            kwargs={'uid_organization': org_id}
+        )
+
+    def _add_user_to_organization(self, user, organization):
+        organization.add_user(user)
+
+        # Transfer the ownership of the user's assets to the organization
+        transfer_member_data_ownership_to_org(user.pk)
+
+    def test_asset_is_excluded_from_projects_list_flag(self):
+        # 1. Create an asset owned by the external user
+        external_user_asset = self._create_asset_by_bob()
+
+        # Ensure the flag is not present in the API response
+        self.assertNotIn('is_excluded_from_projects_list', external_user_asset)
+
+        # Verify the flag is `False` for external user's asset initially
+        asset = Asset.objects.get(owner=self.external_user)
+        self.assertFalse(asset.is_excluded_from_projects_list)
+
+        # Ensure the flag is not present in the asset details API response
+        response = self.client.get(self.asset_detail_url(asset.uid))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn('is_excluded_from_projects_list', response.data)
+
+        # 2. Add external user to the org and transfer the asset ownership
+        self._add_user_to_organization(self.external_user, self.organization)
+
+        # Refresh asset instance and verify the flag is now True
+        asset.refresh_from_db()
+        self.assertTrue(asset.is_excluded_from_projects_list)
+
+        # 3. If the org owner transfers the asset explicitly to another user,
+        # the flag should be False
+        invite = Invite.objects.create(
+            sender=self.org_owner, recipient=self.thirduser
+        )
+        Transfer.objects.create(invite=invite, asset=asset)
+        self.client.force_login(self.thirduser)
+        payload = {
+            'status': InviteStatusChoices.ACCEPTED
+        }
+        response = self.client.patch(
+            self.invite_detail_url(invite.uid), data=payload, format='json'
+        )
+        assert response.status_code == status.HTTP_200_OK
+        asset.refresh_from_db()
+        self.assertFalse(asset.is_excluded_from_projects_list)
+
+        # 4. Create an asset as the organization owner
+        self.client.force_login(self.org_owner)
+        response = self.create_asset(
+            name='Breakfast',
+            content={
+                'survey': [
+                    {
+                        'name': 'egg',
+                        'type': 'integer',
+                        'label': 'how many eggs?',
+                    },
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Ensure the flag is not present in the API response
+        self.assertNotIn('is_excluded_from_projects_list', response.data)
+
+        # Fetch the newly created asset and verify the flag is False
+        owner_asset = Asset.objects.get(name='Breakfast')
+        self.assertFalse(owner_asset.is_excluded_from_projects_list)
+
+    def test_asset_visibility_after_transfer(self):
+        """
+        Test to ensure that an asset shared with an organization owner remains
+        visible after the asset owner joins a different organization
+        """
+        # Step 1: Create an asset owned by an external user
+        response = self._create_asset_by_bob()
+        asset = Asset.objects.get(uid=response.data['uid'])
+
+        # Step 2: External user shares the asset explicitly with OrgA's owner
+        asset.assign_perm(self.org_owner, PERM_VIEW_ASSET)
+        self.assertTrue(self.org_owner.has_perm(PERM_VIEW_ASSET, asset))
+
+        # Step 3: Verify asset visibility in OrgA owner's `My Projects` list
+        response = self.client.get(self.asset_list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            any(obj['uid'] == asset.uid for obj in response.data['results'])
+        )
+
+        # Step 4: Create another organization
+        thirduser_org = Organization.objects.create(
+            id='org1234', name='Another Organization', mmo_override=True
+        )
+        thirduser_org.add_user(self.thirduser, is_admin=True)
+
+        # Add external user to another organization and transfer asset ownership
+        self._add_user_to_organization(self.external_user, thirduser_org)
+
+        # Step 5: Verify that the asset is still visible to OrgA's owner after
+        # the external user joins another organization and transfers assets
+        response = self.client.get(self.asset_list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            any(obj['uid'] == asset.uid for obj in response.data['results'])
+        )
+
+        # Step-6: Verify asset is visible in OrgB owner's `My Org Projects` list
+        self.client.force_login(self.thirduser)
+        response = self.client.get(self.org_assets_list_url(thirduser_org.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            any(obj['uid'] == asset.uid for obj in response.data['results'])
+        )
+
+        # Step-7 Verify asset is not visible in OrgB owner's `My Projects` list
+        response = self.client.get(self.asset_list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(
+            any(obj['uid'] == asset.uid for obj in response.data['results'])
+        )
+
+
+@override_settings(DEFAULT_DEPLOYMENT_BACKEND='mock')
+class TestAssetDataCollectors(TestCase):
+    fixtures = ['test_data']
+
+    def setUp(self):
+        self.someuser = User.objects.get(username='someuser')
+        self.data_collector_group = DataCollectorGroup.objects.create(
+            name='DCG_0', owner=self.someuser
+        )
+        self.dc0 = DataCollector.objects.create(
+            group=self.data_collector_group, name='dc0'
+        )
+        self.dc1 = DataCollector.objects.create(
+            group=self.data_collector_group, name='dc1'
+        )
+        self.asset = Asset.objects.filter(owner=self.someuser).first()
+        # create a version
+        self.asset.save()
+        self.asset.deploy(backend='mock')
+
+    def test_enketo_links_updated_when_first_group_set(self):
+        self.asset.data_collector_group = self.data_collector_group
+        with patch.object(
+            self.asset.deployment,
+            'create_enketo_survey_links_for_single_data_collector',
+        ) as patched_set_links:
+            self.asset.save()
+        patched_set_links.assert_any_call(self.dc0.token)
+        patched_set_links.assert_any_call(self.dc1.token)
+        assert len(patched_set_links.call_args) == 2
+
+    def test_enketo_links_updated_when_group_changed(self):
+        self.asset.data_collector_group = self.data_collector_group
+        self.asset.save()
+        second_group = DataCollectorGroup.objects.create(
+            name='DCG_1', owner=self.someuser
+        )
+        dc1_0 = DataCollector.objects.create(group=second_group, name='dc1_0')
+        dc1_1 = DataCollector.objects.create(group=second_group, name='dc1_1')
+        with patch.object(
+            self.asset.deployment,
+            'create_enketo_survey_links_for_single_data_collector',
+        ) as patched_set_links:
+            with patch.object(
+                self.asset.deployment, 'remove_enketo_links_for_single_data_collector'
+            ) as patched_remove_links:
+                self.asset.data_collector_group = second_group
+                self.asset.save()
+        patched_remove_links.assert_any_call(self.dc0.token)
+        patched_remove_links.assert_any_call(self.dc1.token)
+        assert len(patched_remove_links.call_args) == 2
+
+        patched_set_links.assert_any_call(dc1_0.token)
+        patched_set_links.assert_any_call(dc1_1.token)
+        assert len(patched_set_links.call_args) == 2
+
+    def test_enketo_links_updated_when_group_removed(self):
+        self.asset.data_collector_group = self.data_collector_group
+        self.asset.save()
+
+        with patch.object(
+            self.asset.deployment, 'remove_enketo_links_for_single_data_collector'
+        ) as patched_remove_links:
+            self.asset.data_collector_group = None
+            self.asset.save()
+        patched_remove_links.assert_any_call(self.dc0.token)
+        patched_remove_links.assert_any_call(self.dc1.token)
+        assert len(patched_remove_links.call_args) == 2
+
+    def test_enketo_links_created_when_newly_deployed_with_group(self):
+        undeployed_asset = Asset.objects.filter(owner=self.someuser)[1]
+        undeployed_asset.data_collector_group = self.data_collector_group
+
+        with patch.object(
+            MockDeploymentBackend,
+            'create_enketo_survey_links_for_single_data_collector',
+        ) as patched_set_links:
+            undeployed_asset.save()
+            patched_set_links.assert_not_called()
+            undeployed_asset.deploy(backend='mock')
+
+        patched_set_links.assert_any_call(self.dc0.token)
+        patched_set_links.assert_any_call(self.dc1.token)
+        assert len(patched_set_links.call_args) == 2

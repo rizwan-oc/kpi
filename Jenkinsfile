@@ -1,5 +1,8 @@
 pipeline {
     agent any
+    parameters {
+        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip the Run Frontend Tests stage')
+    }
     environment {
         registry = "837577998611.dkr.ecr.us-west-2.amazonaws.com/kpi"
         clustername = "eks-sbs-dev"
@@ -26,12 +29,11 @@ pipeline {
         
         stage('Run Frontend Tests') {
             when {
-                // List-based check is easier to extend than repeated string comparisons
-                expression { ["build", "build & deploy"].contains(env.ENV) }
+                expression { ["build", "build & deploy"].contains(env.ENV) && !params.SKIP_TESTS }
             }
             agent {
                 docker {
-                    image 'node:16.15.0-bullseye'
+                    image 'node:20.18.1-bullseye'
                     args '--user root:root --shm-size=2g'
                     reuseNode true
                 }
@@ -39,23 +41,16 @@ pipeline {
             environment {
                 HUSKY = '0'
                 DEBIAN_FRONTEND = 'noninteractive'
-                CHROME_PATH = '/usr/bin/chromium'
             }
             steps {
                 sh '''
                     set -e
                     apt-get update -qq
-                    apt-get install -y --no-install-recommends chromium python3
+                    apt-get install -y --no-install-recommends python3
                     ln -sf /usr/bin/python3 /usr/bin/python
-                    # Clean apt lists to reduce disk usage
                     rm -rf /var/lib/apt/lists/*
-                    # npm ci ensures deterministic installs via lockfile.
-                    # --legacy-peer-deps is required due to unresolved peer conflicts in this project's dependency tree.
                     npm ci --legacy-peer-deps --cache /tmp/.npm-cache
-                    node_modules/.bin/webpack --config webpack/test.config.js
-                    # --no-sandbox is required because Chrome cannot use its sandbox when running as root inside Docker.
-                    node_modules/.bin/mocha-chrome test/tests.html \
-                        --chrome-flags='["--no-sandbox","--disable-gpu","--disable-dev-shm-usage","--headless"]'
+                    npm run test:unit
                 '''
             }
         }

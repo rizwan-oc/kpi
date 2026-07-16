@@ -1,6 +1,9 @@
-@use 'scss/breakpoints';
 @use 'scss/z-indexes';
-@use '~kobo-common/src/styles/colors';
+@use 'scss/breakpoints';
+@use 'scss/colors';
+@use 'scss/mixins';
+@use 'scss/libs/_mdl';
+@use 'sass:color';
 
 $s-form-builder-header: 125px;
 $s-form-builder-aside: 400px;
@@ -19,7 +22,7 @@ $s-form-builder-content-width: 1024px;
   overflow-y: scroll;
   margin-right: 0;
   transition: margin $t-form-builder-aside-open;
-  padding: 10px;
+  padding: 20px 40px;
   width: auto;
 
   .form-builder-message-box {
@@ -29,18 +32,17 @@ $s-form-builder-content-width: 1024px;
   }
 }
 
-@media screen and (min-width: breakpoints.$b1100) {
-  .form-builder-aside--visible + .form-builder,
-  .lib-nav--visible + .form-builder {
-    .form-builder__contents {
-      margin-right: $s-form-builder-aside;
-    }
+.form-builder-aside--visible + .form-builder {
+  .form-builder__contents {
+    margin-right: $s-form-builder-aside;
   }
 }
 
+
 .form-wrap {
   width: 100%;
-  padding: 45px 75px; // Similar to the previous form builder
+  max-width: $s-form-builder-content-width;
+  margin: 0 auto;
 
   input,
   textarea {
@@ -61,7 +63,7 @@ $s-form-builder-content-width: 1024px;
     padding: 12px 20px;
 
     p {
-      font-family: $font_mono;
+      font-family: mdl.$font_mono;
       white-space: pre-wrap;
     }
 
@@ -69,30 +71,6 @@ $s-form-builder-content-width: 1024px;
       border: 1px solid black;
       padding-right: 12px;
     }
-
-    &__link {
-      @extend .mdl-button;
-
-      margin-right: 5px;
-
-      &--raised {
-        @extend .mdl-button--colored, .mdl-button--raised;
-      }
-
-      &--help {
-        float: right;
-
-        i {
-          @extend .k-icon-help;
-        }
-      }
-    }
-  }
-}
-
-@media screen and (max-width: breakpoints.$b1280) {
-  .form-wrap {
-    padding: 20px;
   }
 }
 
@@ -108,26 +86,38 @@ $s-form-builder-content-width: 1024px;
     flex-direction: row;
     flex-wrap: nowrap;
     align-items: center;
+    gap: 20px;
 
     &.form-builder-header__row--primary {
       background-color: colors.$kobo-white;
       height: 75px;
       position: relative;
       z-index: 2;
-      box-shadow: 0 0 3px 0 rgba(colors.$kobo-gray-24, 0.2), 0 0 10px 0 rgba(colors.$kobo-gray-24, 0.1);
+      box-shadow: 0 0 3px 0 rgba(colors.$kobo-gray-800, 0.2), 0 0 10px 0 rgba(colors.$kobo-gray-800, 0.1);
     }
 
     &.form-builder-header__row--secondary {
-      background: colors.$kobo-gray-96;
+      background: colors.$kobo-gray-200;
       height: 50px;
       position: relative;
       z-index: 1;
-      box-shadow: 0 0 3px 0 rgba(colors.$kobo-gray-24, 0.2), 0 0 10px 0 rgba(colors.$kobo-gray-24, 0.1);
+      box-shadow: 0 0 3px 0 rgba(colors.$kobo-gray-800, 0.2), 0 0 10px 0 rgba(colors.$kobo-gray-800, 0.1);
+      padding: 0 20px;
+
+      // OpenClinica: all text buttons in the secondary row should be gray, not blue
+      .k-button.k-button--type-text {
+        color: colors.$kobo-gray-700;
+
+        &:hover:not([disabled]) {
+          color: colors.$kobo-teal;
+        }
+      }
     }
   }
 
   .form-builder-header__cell {
     &.form-builder-header__cell--logo {
+      position: relative;
       background-color: colors.$kobo-teal;
       width: 75px;
       text-align: center;
@@ -137,11 +127,11 @@ $s-form-builder-content-width: 1024px;
       transition: 0.2s;
 
       &:hover {
-        background-color: darken(colors.$kobo-teal, 10%);
+        background-color: color.adjust(colors.$kobo-teal, $lightness: -10%);
       }
 
       &:focus {
-        background-color: darken(colors.$kobo-teal, 10%);
+        background-color: color.adjust(colors.$kobo-teal, $lightness: -10%);
 
         .k-icon {
           font-size: 40px;
@@ -165,6 +155,7 @@ $s-form-builder-content-width: 1024px;
 
     &.form-builder-header__cell--name {
       flex: 1;
+      // OpenClinica: indent name field from logo cell
       margin-left: 20px;
 
       label::first-letter {
@@ -175,6 +166,16 @@ $s-form-builder-content-width: 1024px;
         border-radius: 0;
         padding-left: 0;
         font-size: 16px;
+        // OpenClinica: gray underline only; blue on focus
+        border: none;
+        border-bottom: 2px solid colors.$kobo-gray-400;
+        outline: none;
+        background: transparent;
+
+        &:focus {
+          border-bottom-color: colors.$kobo-blue;
+          box-shadow: none;
+        }
       }
     }
 
@@ -187,7 +188,7 @@ $s-form-builder-content-width: 1024px;
 
         small {
           display: block;
-          color: colors.$kobo-gray-40;
+          color: colors.$kobo-gray-700;
 
           &::before {
             content: '+ ';
@@ -197,11 +198,20 @@ $s-form-builder-content-width: 1024px;
     }
 
     &.form-builder-header__cell--buttonsTopRight {
-      text-align: right;
-      margin: 0 10px;
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      padding-right: 10px;
 
-      button {
-        margin-left: 10px;
+      // OpenClinica: outlined style for secondary (back) button
+      .k-button.k-button--type-secondary {
+        background-color: colors.$kobo-white;
+        border: 2px solid colors.$kobo-blue;
+        color: colors.$kobo-blue;
+
+        &:hover:not([disabled]) {
+          background-color: colors.$kobo-bg-blue;
+        }
       }
     }
 
@@ -214,77 +224,28 @@ $s-form-builder-content-width: 1024px;
 
     // second row
     &.form-builder-header__cell--toolsButtons {
-      margin: 0 10px;
+      @include mixins.centerRowFlex;
+      gap: 10px;
 
-      button {
-        color: colors.$kobo-gray-40;
-        // for tooltip
-        overflow: visible;
-        padding: 0;
-        margin-right: 10px;
+      // OpenClinica: toolbar action icons should be gray, not blue
+      .k-button.k-button--type-text {
+        color: colors.$kobo-gray-700;
 
-        &[data-tip]::after {
-          margin-left: 30px;
+        &:hover:not([disabled]) {
+          color: colors.$kobo-teal;
         }
-
-        &:hover,
-        &:focus,
-        &:focus:not(:active) {
-          background-color: transparent;
-        }
-
-        &:hover {
-          color: colors.$kobo-gray-24;
-        }
-
-        i {
-          font-size: 24px;
-          margin: 3px;
-          vertical-align: middle;
-        }
-
-        &.add-questions-to-library {
-          .k-icon-plus {
-            color: colors.$kobo-teal;
-            position: absolute;
-            font-size: 16px;
-            left: 13px;
-            top: 15px;
-          }
-        }
-      }
-
-      button:last-child {
-        margin-right: 0;
       }
     }
 
     &.form-builder-header__cell--supportUrl {
-      margin: 0 10px;
+      // OpenClinica: larger gray help icon
+      a {
+        font-size: 24px;
+        color: colors.$kobo-gray-700;
 
-      a:hover {
-        color: colors.$kobo-gray-14;
-
-        .k-icon {
-          color: colors.$kobo-gray-14;
+        &:hover {
+          color: colors.$kobo-teal;
         }
-      }
-
-      i {
-        font-size: 32px;
-        vertical-align: bottom;
-      }
-
-      .k-icon {
-        color: #8a8ea3;
-        font-size: 32px;
-        vertical-align: bottom;
-      }
-    }
-
-    &.form-builder-header__cell--rightTaskbar-buttons {
-      .k-icon {
-        vertical-align: bottom;
       }
     }
 
@@ -295,123 +256,48 @@ $s-form-builder-content-width: 1024px;
 
     &.form-builder-header__cell--verticalRule {
       width: 1px;
-      background: colors.$kobo-gray-92;
+      background: colors.$kobo-gray-300;
       height: 100%;
     }
   }
 }
 
-.form-builder-header__close {
-  border: none;
-  color: colors.$kobo-gray-40;
-  cursor: pointer;
-
-  @extend .mdl-button, .mdl-button--icon;
-
-  &:hover {
-    color: colors.$kobo-gray-24;
-  }
-
-  &:focus {
-    i {
-      @include form-builder-focus();
-    }
-  }
-}
+// FORM BUILDER TOOLBAR BUTTON (oc/master-style icon button with nested icons)
 
 .form-builder-header__button {
-  @extend .mdl-button;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-right: 10px;
+  color: colors.$kobo-gray-700;
+  overflow: visible; // allow absolutely-positioned child icons to overflow
 
-  &:focus {
-    i {
-      @include form-builder-focus();
+  i {
+    font-size: 24px;
+    margin: 3px;
+    vertical-align: middle;
+    position: relative; // anchor for the nested absolute icon
+  }
+
+  &.add-questions-to-library {
+    .k-icon-plus {
+      color: colors.$kobo-teal;
+      position: absolute;
+      font-size: 16px;
+      left: 13px;
+      top: 15px;
     }
   }
 
-  &.form-builder-header__button--create,
-  &.form-builder-header__button--save {
-    margin-left: 10px;
-    text-transform: uppercase;
-    min-width: 85px;
-
-    @extend .mdl-button--colored, .mdl-button--raised;
-
-    > i {
-      display: none;
-    }
-
-    &:focus {
-      background-color: darken(colors.$kobo-blue, 10%);
-      font-weight: bold;
-    }
-  }
-
-  &.form-builder-header__button--back {
-    text-transform: uppercase;
-    color: colors.$kobo-blue;
-    background-color: colors.$kobo-white;
-    border: 2px solid colors.$kobo-blue;
-
-    &:hover {
-      border-color: darken(colors.$kobo-blue, 10%);
-      color: darken(colors.$kobo-blue, 10%);
-    }
-  }
-
-  &.form-builder-header__button--savepending,
-  &.form-builder-header__button--create-pending {
-    > i {
-      @extend .k-spin, .k-icon, .k-icon-spinner;
-
-      font-size: 24px;
-      display: inline-block;
-      vertical-align: middle;
-      margin-right: 3px;
-      margin-left: -2px;
-    }
-
-    > i + span {
-      display: none;
-    }
-  }
-
-  &.form-builder-header__button--savefailed::after,
-  &.form-builder-header__button--saveneeded::after {
-    content: '*';
-    color: colors.$kobo-white;
-  }
-
-  &.form-builder-header__button--panel-toggle {
-    padding: 0 10px;
-
-    &.form-builder-header__button--active {
-      i.k-icon {
-        color: colors.$kobo-blue;
-      }
-    }
-
-    .panel-toggle-name {
-      margin-right: 10px;
-    }
-
-    i.k-icon {
-      font-size: 24px;
-      margin-right: 3px;
-      vertical-align: middle;
-    }
-
-    &:focus {
-      @include form-builder-focus();
-
-      i {
-        outline: none;
-      }
-    }
-  }
-
+  &:disabled,
   &[disabled] {
     opacity: 0.5;
     pointer-events: none;
+  }
+
+  &:hover:not(:disabled):not([disabled]) {
+    color: colors.$kobo-gray-800;
   }
 }
 
@@ -423,9 +309,9 @@ $s-form-builder-content-width: 1024px;
   bottom: 0;
   top: $s-form-builder-header;
   width: $s-form-builder-aside;
-  background-color: colors.$kobo-gray-96;
+  background-color: colors.$kobo-gray-200;
   transition: right $t-form-builder-aside-open;
-  box-shadow: 0 0 3px 0 rgba(colors.$kobo-gray-24, 0.2), 0 0 10px 0 rgba(colors.$kobo-gray-24, 0.1);
+  box-shadow: 0 0 3px 0 rgba(colors.$kobo-gray-800, 0.2), 0 0 10px 0 rgba(colors.$kobo-gray-800, 0.1);
   z-index: z-indexes.$z-form-builder-aside;
 
   &:not(.form-builder-aside--visible) {
@@ -464,44 +350,6 @@ $s-form-builder-content-width: 1024px;
   }
 }
 
-// FORM META
-
-.form-builder-meta {
-  .form-builder-meta__columns {
-    display: flex;
-    flex-direction: row;
-  }
-
-  .form-builder-meta__row {
-    margin-top: 10px;
-  }
-
-  .form-builder-meta__row--background-audio {
-    margin-top: 20px;
-
-    .form-builder-aside__header {
-      margin-bottom: 0;
-    }
-
-    .toggle-switch {
-      margin-top: 10px;
-    }
-
-    label {
-      font-weight: 500;
-    }
-  }
-
-  .form-builder-meta__column {
-    flex: 1;
-    margin-right: 10px;
-
-    .checkbox:not(:last-of-type) {
-      margin-bottom: 10px;
-    }
-  }
-}
-
 // CASCADE MODAL CONTENTS
 
 .cascade-popup {
@@ -509,18 +357,12 @@ $s-form-builder-content-width: 1024px;
     margin: 15px 0;
     width: 100%;
     height: 220px;
-    border: 2px solid colors.$kobo-gray-92;
+    border: 2px solid colors.$kobo-gray-300;
   }
 
   .cascade-popup__buttonWrapper {
     padding-top: 10px;
     text-align: right;
-
-    button {
-      @extend .mdl-button, .mdl-button--colored, .mdl-button--raised;
-
-      min-width: 100px;
-    }
   }
 
   .cascade-popup__message {
@@ -538,7 +380,7 @@ $s-form-builder-content-width: 1024px;
 
     i {
       font-size: 18px;
-      color: colors.$kobo-gray-40;
+      color: colors.$kobo-gray-700;
     }
   }
 }
@@ -557,33 +399,34 @@ $s-form-builder-content-width: 1024px;
   .placeholder {
     margin: 5px 0;
   }
-  .lib-list__item {
-    background: transparent;
-  }
 }
 
 // FORM BUILDER SMALL SCREEN ADJUSTMENTS
 
-@media screen and (max-width: 767px) {
-  .form-builder-header__cell--logo {
-    display: none;
-  }
+// TODO: we should rework all these media queries to mobile first, but it's
+// possible we would rewrite form builder, so it would be useless
 
-  .formBuilder-header__cell--buttonsTopRight {
-    .formBuilder-header__button--save {
-      max-width: 135px;
-      text-overflow: ellipsis;
+@media screen and (width < breakpoints.$b768) {
+  .form-builder-header {
+    .form-builder-header__row {
+      gap: 5px;
     }
-  }
 
-  .form-builder-header__button--panel-toggle {
-    .panel-toggle-name {
+    .form-builder-header__row.form-builder-header__row--secondary {
+      padding: 0 5px;
+    }
+
+    .form-builder-header__cell--verticalRule {
       display: none;
+    }
+
+    .form-builder-header__cell.form-builder-header__cell--logo {
+      width: 50px;
     }
   }
 }
 
-@media screen and (max-width: 767px) {
+@media screen and (width < breakpoints.$b768) {
   .form-builder-header__cell--library-toggle {
     display: none;
   }
@@ -595,12 +438,7 @@ $s-form-builder-content-width: 1024px;
   }
 }
 
-@media screen and (max-width: 480px) {
-  .form-builder-header__cell--toolsButtons button {
-    padding: 0;
-    border-radius: 0;
-  }
-
+@media screen and (width <= 480px) {
   .card--selectquestion__expansion {
     padding-right: 5px;
     padding-left: 25px;
@@ -641,20 +479,20 @@ $s-form-builder-content-width: 1024px;
 
   .card__settings__fields__field {
     > label {
-      text-align: left;
+      text-align: initial;
       margin-right: 1%;
     }
 
     .settings__input {
-      input[type="text"] {
-        border: 1px solid colors.$kobo-gray-92;
+      input[type='text'] {
+        border: 1px solid colors.$kobo-gray-300;
       }
     }
   }
 
   .questiontypelist__item {
     text-align: center;
-    background: colors.$kobo-gray-96;
+    background: colors.$kobo-gray-200;
 
     i {
       display: block;

@@ -1,0 +1,615 @@
+from datetime import datetime, timedelta
+from unittest.mock import patch
+
+import pytest
+from allauth.socialaccount.models import SocialAccount
+from constance.test import override_config
+from django.conf import settings
+from django.core.cache import cache
+from django.db import connection
+from django.urls import reverse
+from django.utils import timezone
+from model_bakery import baker
+from rest_framework import status
+
+from kobo.apps.kobo_auth.shortcuts import User
+from kobo.apps.openrosa.apps.logger.models import DailyXFormSubmissionCounter
+from kobo.apps.openrosa.apps.main.models import UserProfile
+from kobo.apps.organizations.constants import UsageType
+from kobo.apps.trackers.models import NLPUsageCounter
+from kobo.apps.user_reports.models import BillingAndUsageSnapshot
+from kobo.apps.user_reports.tasks import refresh_user_report_snapshots
+from kobo.apps.user_reports.utils.snapshot_refresh_helpers import (
+    refresh_user_reports_materialized_view,
+)
+from kpi.tests.base_test_case import BaseTestCase
+from kpi.urls.router_api_v2 import URL_NAMESPACE as ROUTER_URL_NAMESPACE
+
+
+class UserReportsViewSetAPITestCase(BaseTestCase):
+
+    fixtures = ['test_data']
+    URL_NAMESPACE = ROUTER_URL_NAMESPACE
+
+    def setUp(self):
+        self.client.login(username='adminuser', password='pass')
+        self.url = reverse(self._get_endpoint('user-reports-list'))
+
+        self.someuser = User.objects.get(username='someuser')
+        self.organization = self.someuser.organization
+
+        baker.make(BillingAndUsageSnapshot, organization_id=self.organization.id)
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+    def test_list_view_requires_authentication(self):
+        self.client.logout()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_view_requires_superuser_permission(self):
+        self.client.logout()
+        self.client.force_login(user=self.someuser)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list_view_succeeds_for_superuser(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Make sure that all 3 users from the 'test_data' are included
+        self.assertEqual(len(response.data['results']), 3)
+
+    def test_endpoint_returns_error_when_mv_is_missing(self):
+        # Drop the materialized view before the test
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'DROP MATERIALIZED VIEW IF EXISTS user_reports_userreportsmv CASCADE;'
+            )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(
+            response.json(),
+            {
+                'details': (
+                    'The data source for user reports is missing. '
+                    'Please run `./manage.py manage_user_reports_mv --create` to '
+                    'create the materialized view: user_reports_userreportsmv.'
+                )
+            },
+        )
+
+    @pytest.mark.skipif(
+        not settings.STRIPE_ENABLED, reason='Requires stripe functionality'
+    )
+    def test_subscription_data_is_correctly_returned(self):
+
+        # Create and add a subscription to someuser
+        from djstripe.enums import BillingScheme
+        from djstripe.models import Customer
+
+        self.customer = baker.make(Customer, subscriber=self.organization)
+        self.subscription = baker.make(
+            'djstripe.Subscription',
+            customer=self.customer,
+            items__price__livemode=False,
+            items__price__billing_scheme=BillingScheme.per_unit,
+            livemode=False,
+            metadata={'organization_id': str(self.organization.id)},
+        )
+        refresh_user_reports_materialized_view(concurrently=False)
+        user_with_sub = self._get_someuser_data()
+        self.assertEqual(len(user_with_sub['subscriptions']), 1)
+        self.assertEqual(user_with_sub['subscriptions'][0]['id'], self.subscription.id)
+
+        subscription_item = user_with_sub['subscriptions'][0]['items'][0]
+
+        self.assertEqual(subscription_item['id'], self.subscription.items.first().id)
+        self.assertEqual(
+            subscription_item['price']['id'], self.subscription.items.first().price.id
+        )
+        self.assertEqual(
+            subscription_item['price']['product']['id'],
+            self.subscription.items.first().price.product.id,
+        )
+        self.assertEqual(
+            user_with_sub['subscriptions'][0]['customer'], self.customer.id
+        )
+        self.assertEqual(
+            user_with_sub['subscriptions'][0]['metadata']['organization_id'],
+            self.subscription.metadata['organization_id'],
+        )
+
+    @pytest.mark.skipif(
+        not settings.STRIPE_ENABLED, reason='Requires stripe functionality'
+    )
+    def test_social_accounts_are_not_duplicated_with_multiple_subscriptions(self):
+        """
+        Ensure that social accounts are not duplicated when a user is attached to
+        multiple subscriptions
+        """
+        from djstripe.enums import BillingScheme
+        from djstripe.models import Customer
+
+        SocialAccount.objects.create(
+            user=self.someuser,
+            provider='acted',
+            uid='test-social-uid',
+        )
+
+        customer = baker.make(Customer, subscriber=self.organization)
+
+        # Create two subscriptions for same organization
+        baker.make(
+            'djstripe.Subscription',
+            customer=customer,
+            items__price__livemode=False,
+            items__price__billing_scheme=BillingScheme.per_unit,
+            livemode=False,
+            metadata={'organization_id': str(self.organization.id)},
+        )
+        baker.make(
+            'djstripe.Subscription',
+            customer=customer,
+            items__price__livemode=False,
+            items__price__billing_scheme=BillingScheme.per_unit,
+            livemode=False,
+            metadata={'organization_id': str(self.organization.id)},
+        )
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+        data = self._get_someuser_data()
+
+        social = data['social_accounts']
+        subs = data['subscriptions']
+
+        self.assertEqual(len(subs), 2)
+        self.assertEqual(len(social), 1)
+        self.assertEqual(social[0]['uid'], 'test-social-uid')
+
+    def test_service_usage_data_is_correctly_returned(self):
+        """
+        Test that the service usage data is correctly calculated and returned
+        in the user report, including balances based on mocked limits
+        """
+        # Create submission counter entries to simulate usage
+        DailyXFormSubmissionCounter.objects.create(
+            user_id=self.someuser.id, date=timezone.now().date(), counter=15
+        )
+        DailyXFormSubmissionCounter.objects.create(
+            user_id=self.someuser.id,
+            date=timezone.now().date() - timezone.timedelta(days=100),
+            counter=135,
+        )
+        NLPUsageCounter.objects.create(
+            user_id=self.someuser.id, date=timezone.now().date(), total_asr_seconds=100
+        )
+        NLPUsageCounter.objects.create(
+            user_id=self.someuser.id,
+            date=timezone.now().date() - timezone.timedelta(days=100),
+            total_asr_seconds=80,
+        )
+        UserProfile.objects.filter(user_id=self.someuser.id).update(
+            attachment_storage_bytes=200000000
+        )
+
+        # Mock `get_organizations_effective_limits` to return test limits.
+        mock_limits = {
+            self.someuser.organization.id: {
+                f'{UsageType.SUBMISSION}_limit': 10,
+                f'{UsageType.STORAGE_BYTES}_limit': 500000000,
+                f'{UsageType.ASR_SECONDS}_limit': 120,
+                f'{UsageType.MT_CHARACTERS}_limit': 5,
+            }
+        }
+        with patch(
+            'kobo.apps.user_reports.tasks.get_organizations_effective_limits',
+            return_value=mock_limits,
+        ):
+            cache.clear()
+            refresh_user_report_snapshots()
+            self.client.login(username='adminuser', password='pass')
+            someuser_data = self._get_someuser_data()
+
+        service_usage = someuser_data['service_usage']
+        # Assert total usage counts from the snapshot
+        self.assertEqual(service_usage['total_submission_count']['current_period'], 15)
+        self.assertEqual(service_usage['total_submission_count']['cumulative'], 150)
+        self.assertEqual(service_usage['total_storage_bytes'], 200000000)
+        self.assertEqual(
+            service_usage['total_nlp_usage']['asr_seconds_current_period'], 100
+        )
+        self.assertEqual(service_usage['total_nlp_usage']['asr_seconds_all_time'], 180)
+        self.assertEqual(
+            service_usage['total_nlp_usage']['mt_characters_current_period'], 0
+        )
+        self.assertEqual(service_usage['total_nlp_usage']['mt_characters_all_time'], 0)
+
+        # Assert calculated balances based on mock limits and real results
+        balances = service_usage['balances']
+
+        # Submission balance: 15 / 10 = 1.5, so 150% and exceeded.
+        self.assertIsNotNone(balances['submission'])
+        self.assertTrue(balances['submission']['exceeded'])
+        self.assertEqual(balances['submission']['effective_limit'], 10)
+        self.assertEqual(balances['submission']['balance_value'], -5)
+        self.assertEqual(balances['submission']['balance_percent'], 150)
+
+        # Storage balance: 200,000,000 / 500,000,000 = 0.4, so 40% and not exceeded.
+        self.assertIsNotNone(balances['storage_bytes'])
+        self.assertFalse(balances['storage_bytes']['exceeded'])
+        self.assertEqual(balances['storage_bytes']['effective_limit'], 500000000)
+        self.assertEqual(balances['storage_bytes']['balance_value'], 300000000)
+        self.assertEqual(balances['storage_bytes']['balance_percent'], 40)
+
+        # ASR Seconds balance: 0 / 120 = 0, so 0% and not exceeded.
+        self.assertIsNotNone(balances['asr_seconds'])
+        self.assertFalse(balances['asr_seconds']['exceeded'])
+        self.assertEqual(balances['asr_seconds']['effective_limit'], 120)
+        self.assertEqual(balances['asr_seconds']['balance_value'], 20)
+        self.assertEqual(balances['asr_seconds']['balance_percent'], 83)
+
+        # MT Characters balance: 0 / 5 = 0, so 0% and not exceeded.
+        self.assertIsNotNone(balances['mt_characters'])
+        self.assertFalse(balances['mt_characters']['exceeded'])
+        self.assertEqual(balances['mt_characters']['effective_limit'], 5)
+        self.assertEqual(balances['mt_characters']['balance_value'], 5)
+        self.assertEqual(balances['mt_characters']['balance_percent'], 0)
+
+    def test_organization_data_is_correctly_returned(self):
+        someuser_data = self._get_someuser_data()
+
+        organization_data = someuser_data['organization']
+
+        self.assertEqual(organization_data['name'], self.someuser.organization.name)
+        self.assertEqual(organization_data['uid'], str(self.someuser.organization.id))
+        self.assertEqual(organization_data['role'], 'owner')
+
+    def test_account_restricted_field(self):
+        # Verify `account_restricted` is initially false
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results']
+        someuser_data = next(
+            (user for user in results if user['username'] == 'someuser'),
+            None,
+        )
+
+        self.assertIsNotNone(someuser_data)
+        self.assertFalse(someuser_data['account_restricted'])
+
+        # Create a submission counter entry to simulate usage
+        DailyXFormSubmissionCounter.objects.create(
+            user_id=self.someuser.id, date=timezone.now().date(), counter=10
+        )
+
+        # Mock the `get_organizations_effective_limits` function
+        # to return a predefined limit
+        mock_limits = {
+            self.someuser.organization.id: {
+                f'{UsageType.SUBMISSION}_limit': 1,
+                f'{UsageType.STORAGE_BYTES}_limit': 500000000,
+                f'{UsageType.ASR_SECONDS}_limit': 120,
+                f'{UsageType.MT_CHARACTERS}_limit': 5,
+            }
+        }
+        with patch(
+            'kobo.apps.user_reports.tasks.get_organizations_effective_limits',
+            return_value=mock_limits,
+        ):
+            cache.clear()
+            refresh_user_report_snapshots()
+
+            self.client.login(username='adminuser', password='pass')
+            someuser_data = self._get_someuser_data()
+            self.assertTrue(someuser_data['account_restricted'])
+
+    def test_accepted_tos_field(self):
+        # Verify `accepted_tos` is initially false
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results']
+        self.assertEqual(results[0]['accepted_tos'], False)
+
+        # POST to the tos endpoint to accept the terms of service
+        tos_url = reverse('tos')
+        response = self.client.post(tos_url)
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+        # Verify `accepted_tos` has been set to True
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results']
+        self.assertTrue(results[0]['accepted_tos'])
+
+    def test_ordering_by_date_joined(self):
+        base_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        adminuser = User.objects.get(username='adminuser')
+        adminuser.date_joined = base_date
+        adminuser.save()
+
+        self.someuser.date_joined = base_date + timedelta(days=1)
+        self.someuser.save()
+
+        anotheruser = User.objects.get(username='anotheruser')
+        anotheruser.date_joined = base_date + timedelta(days=2)
+        anotheruser.save()
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+        response = self.client.get(self.url, {'ordering': 'date_joined'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results']
+        self.assertEqual(results[0]['username'], 'adminuser')
+        self.assertEqual(results[1]['username'], 'someuser')
+        self.assertEqual(results[2]['username'], 'anotheruser')
+
+    def test_service_usage_handles_unlimited_limits(self):
+        """
+        Test that when limits are NULL (unlimited), the API returns a balance object
+        with 'effective_limit': null instead of the object being null
+        """
+        DailyXFormSubmissionCounter.objects.create(
+            user_id=self.someuser.id, date=timezone.now().date(), counter=500
+        )
+
+        mock_limits = {
+            self.someuser.organization.id: {
+                f'{UsageType.SUBMISSION}_limit': float('inf'),
+                f'{UsageType.STORAGE_BYTES}_limit': float('inf'),
+                f'{UsageType.ASR_SECONDS}_limit': float('inf'),
+                f'{UsageType.MT_CHARACTERS}_limit': float('inf'),
+            }
+        }
+
+        with patch(
+            'kobo.apps.user_reports.tasks.get_organizations_effective_limits',
+            return_value=mock_limits,
+        ):
+            cache.clear()
+            refresh_user_report_snapshots()
+            someuser_data = self._get_someuser_data()
+
+        balances = someuser_data['service_usage']['balances']
+        self.assertIsNotNone(balances['submission'])
+        self.assertIsNone(balances['submission']['effective_limit'])
+        self.assertEqual(balances['submission']['balance_percent'], 0)
+        self.assertFalse(balances['submission']['exceeded'])
+
+        self.assertIsNotNone(balances['storage_bytes'])
+        self.assertIsNone(balances['storage_bytes']['effective_limit'])
+        self.assertFalse(balances['storage_bytes']['exceeded'])
+
+        self.assertIsNotNone(balances['asr_seconds'])
+        self.assertIsNone(balances['asr_seconds']['effective_limit'])
+
+        self.assertIsNotNone(balances['mt_characters'])
+        self.assertIsNone(balances['mt_characters']['effective_limit'])
+
+    def test_last_updated_fallback_for_users_without_snapshot(self):
+        """
+        Test that users without a BillingAndUsageSnapshot (e.g., no org) still
+        get a valid 'last_updated' timestamp from the materialized view refresh
+        """
+        User.objects.create(username='new_user')
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results']
+        new_user_data = next(
+            (user for user in results if user['username'] == 'new_user'), None
+        )
+        self.assertIsNotNone(new_user_data)
+        last_updated_str = new_user_data.get('last_updated')
+        self.assertIsNotNone(last_updated_str)
+
+    @pytest.mark.skipif(
+        not settings.STRIPE_ENABLED, reason='Requires stripe functionality'
+    )
+    def test_subscription_linked_via_customer_without_metadata(self):
+        """
+        Link subscriptions via `Customer.subscriber_id` to ensure the org owner
+        can see their subscription even when Stripe metadata is missing
+        """
+        from djstripe.enums import BillingScheme
+        from djstripe.models import Customer
+
+        # Create a Customer linked to the Organization
+        customer = baker.make(Customer, subscriber=self.organization)
+
+        # Create a Subscription for this Customer with EMPTY metadata
+        subscription = baker.make(
+            'djstripe.Subscription',
+            customer=customer,
+            items__price__livemode=False,
+            items__price__billing_scheme=BillingScheme.per_unit,
+            livemode=False,
+            metadata={},
+            status='active'
+        )
+
+        # Verify that the subscription is not visible in the API
+        user_data = self._get_someuser_data()
+        self.assertEqual(len(user_data['subscriptions']), 0)
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+        user_data = self._get_someuser_data()
+
+        # Verify that the subscription is now visible and linked to the correct
+        # customer and organization, even without metadata
+        self.assertEqual(len(user_data['subscriptions']), 1)
+
+        sub_data = user_data['subscriptions'][0]
+        self.assertEqual(sub_data['id'], subscription.id)
+        self.assertEqual(sub_data['customer'], customer.id)
+        self.assertEqual(sub_data['metadata'], {})
+
+    def test_offset_limit_set_by_constance(self):
+        for i in range(20):
+            User.objects.create(username=f'user_{i}')
+        refresh_user_report_snapshots()
+        with override_config(USER_REPORTS_PAGE_SIZE_LIMIT=10):
+            response = self.client.get(f'{self.url}?limit=1')
+            results = response.data['results']
+            assert len(results) == 1
+            response = self.client.get(f'{self.url}')
+            results = response.data['results']
+            assert len(results) == 10
+            response = self.client.get(f'{self.url}?limit=100')
+            results = response.data['results']
+            assert len(results) == 10
+
+    def _get_someuser_data(self):
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results']
+        someuser_data = next(
+            (user for user in results if user['username'] == 'someuser'), None
+        )
+        self.assertIsNotNone(someuser_data)
+        return someuser_data
+
+
+class UserReportsFilterAndOrderingTestCase(BaseTestCase):
+
+    fixtures = ['test_data']
+    URL_NAMESPACE = ROUTER_URL_NAMESPACE
+
+    def setUp(self):
+        self.client.login(username='adminuser', password='pass')
+        self.url = reverse(self._get_endpoint('user-reports-list'))
+
+        self.someuser = User.objects.get(username='someuser')
+        self.organization = self.someuser.organization
+
+        baker.make(BillingAndUsageSnapshot, organization_id=self.organization.id)
+
+        refresh_user_reports_materialized_view(concurrently=False)
+
+    def _get_results(self, params=None):
+        params = params or {}
+        resp = self.client.get(self.url, params)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        return resp.json()
+
+    def test_username_prefix_filter(self):
+        res = self._get_results({'q': 'username__icontains:some'})
+        self.assertEqual(len(res['results']), 1)
+        self.assertEqual(res['results'][0]['username'], 'someuser')
+
+    def test_email_prefix_filter(self):
+        res = self._get_results({'q': 'email__icontains:some@user'})
+        self.assertEqual(len(res['results']), 1)
+        self.assertEqual(res['results'][0]['email'], 'some@user.com')
+
+    def test_date_joined_gte_and_lte_filters(self):
+        all_results = self._get_results()
+        filtered_results = self._get_results({'q': 'date_joined__gte:2012-01-01'})
+        self.assertLessEqual(
+            len(filtered_results['results']), len(all_results['results'])
+        )
+
+        no_results = self._get_results({'q': 'date_joined__gte:3020-01-01'})
+        self.assertEqual(len(no_results['results']), 0)
+
+    def test_storage_bytes_gte_and_lte_filters(self):
+        # Update someuser's storage to simulate storage usage
+        UserProfile.objects.filter(user_id=self.someuser.id).update(
+            attachment_storage_bytes=123456789
+        )
+        refresh_user_report_snapshots()
+
+        resp_gte = self._get_results(
+            {'q': 'service_usage__total_storage_bytes__gte:100000000'}
+        )
+        self.assertTrue(any(r['username'] == 'someuser' for r in resp_gte['results']))
+
+        resp_lte = self._get_results(
+            {'q': 'service_usage__total_storage_bytes__lte:200000000'}
+        )
+        self.assertTrue(any(r['username'] == 'someuser' for r in resp_lte['results']))
+
+    def test_current_period_submissions_gte_and_lte_filters(self):
+        # Create a submission counter entry to simulate usage
+        DailyXFormSubmissionCounter.objects.create(
+            user_id=self.someuser.id, date=timezone.now().date(), counter=5
+        )
+        refresh_user_report_snapshots()
+
+        resp_gte = self._get_results(
+            {'q': 'service_usage__total_submission_count__current_period__gte:4'}
+        )
+        self.assertTrue(any(r['username'] == 'someuser' for r in resp_gte['results']))
+
+        resp_lte = self._get_results(
+            {'q': 'service_usage__total_submission_count__current_period__lte:5'}
+        )
+        self.assertTrue(any(r['username'] == 'someuser' for r in resp_lte['results']))
+
+    def test_balances_nested_json_filter(self):
+        """
+        Test filtering by nested balances JSON value
+        """
+        DailyXFormSubmissionCounter.objects.create(
+            user_id=self.someuser.id, date=timezone.now().date(), counter=1
+        )
+
+        with patch(
+            'kobo.apps.user_reports.tasks.get_organizations_effective_limits'
+        ) as mock_limits:
+            mock_limits.return_value = {
+                self.someuser.organization.id: {
+                    f'{UsageType.SUBMISSION}_limit': 5000,
+                    f'{UsageType.STORAGE_BYTES}_limit': 31011593,
+                    f'{UsageType.ASR_SECONDS}_limit': 600,
+                    f'{UsageType.MT_CHARACTERS}_limit': 6000,
+                }
+            }
+            refresh_user_report_snapshots()
+            res = self._get_results(
+                {'q': 'service_usage__balances__submission__balance_value__lte:4999'}
+            )
+            self.assertTrue(any(r['username'] == 'someuser' for r in res['results']))
+
+    @pytest.mark.skipif(
+        not settings.STRIPE_ENABLED, reason='Requires stripe functionality'
+    )
+    def test_subscriptions_nested_json_filter(self):
+        # Create and add a subscription to someuser
+        from djstripe.enums import BillingScheme
+        from djstripe.models import Customer
+
+        self.customer = baker.make(Customer, subscriber=self.organization)
+        self.subscription = baker.make(
+            'djstripe.Subscription',
+            customer=self.customer,
+            items__price__livemode=False,
+            items__price__billing_scheme=BillingScheme.per_unit,
+            livemode=False,
+            metadata={'organization_id': str(self.organization.id)},
+        )
+        refresh_user_reports_materialized_view(concurrently=False)
+
+        # Filter by subscription ID
+        res = self._get_results({'q': f'subscriptions[]__id:{self.subscription.id}'})
+        self.assertTrue(any(r['username'] == 'someuser' for r in res['results']))
+
+        # Filter by subscription status
+        res = self._get_results(
+            {'q': f'subscriptions[]__status:{self.subscription.status}'}
+        )
+        self.assertTrue(any(r['username'] == 'someuser' for r in res['results']))

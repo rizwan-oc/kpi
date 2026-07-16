@@ -1,9 +1,9 @@
 _ = require('underscore')
 Backbone = require('backbone')
-constants = require('../../js/constants')
+constants = require('#/constants')
 
 module.exports = do ->
-  _t = require("utils").t
+  _t = require("#/utils").t
 
   addIconToRow = (typeDef, group) ->
     iconDetails.push({
@@ -35,7 +35,7 @@ module.exports = do ->
   addIconToRow(constants.QUESTION_TYPES.select_one_from_file, "r4")
   addIconToRow(constants.QUESTION_TYPES.pii_encrypted, "r4")
   addIconToRow(constants.QUESTION_TYPES.econsent_signature, "r4")
-  
+
   class QtypeIcon extends Backbone.Model
     defaults: {
       iconClassname: "k-icon"
@@ -53,6 +53,7 @@ module.exports = do ->
           ii = grp_keys.indexOf(grping)
           @_groups[ii] or @_groups[ii] = []
           @_groups[ii].push(model)
-      _.zip.apply(null, @_groups)
+          return
+      return _.zip.apply(null, @_groups)
 
-  new QtypeIconCollection(iconDetails)
+  return new QtypeIconCollection(iconDetails)

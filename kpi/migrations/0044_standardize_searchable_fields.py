@@ -34,6 +34,10 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('kpi', '0043_asset_tracks_addl_columns'),
+        # standardize_searchable_fields accesses user.organization which queries
+        # organizations_organization including columns added through 0009; depend
+        # on the full organizations migration chain (upstream omitted this dependency).
+        ('organizations', '0009_update_db_state_with_auth_user'),
     ]
 
     # allow this command to be run backwards

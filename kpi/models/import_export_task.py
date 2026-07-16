@@ -1,7 +1,5 @@
-# coding: utf-8
 import base64
 import datetime
-import dateutil.parser
 import os
 import posixpath
 import re
@@ -9,25 +7,29 @@ import tempfile
 from collections import defaultdict
 from io import BytesIO
 from os.path import split, splitext
-from typing import List, Dict, Optional, Tuple, Generator
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+from typing import Dict, Generator, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import constance
+import dateutil.parser
 import requests
 from django.conf import settings
 from django.contrib.postgres.indexes import BTreeIndex, HashIndex
-from django.core.files.storage import FileSystemStorage
 from django.db import models, transaction
-from django.db.models import F
-from django.urls import reverse
+from django.db.models import CharField, F, Value
+from django.db.models.functions import Concat
+from django.db.models.query import QuerySet
+from django.utils import timezone
 from django.utils.translation import gettext as t
+from openpyxl.utils.exceptions import InvalidFileException
+from private_storage.fields import PrivateFileField
+from pyxform.xls2json_backends import xls_to_dict, xlsx_to_dict
+from rest_framework import exceptions
+from rest_framework.reverse import reverse
+from werkzeug.http import parse_options_header
+
 import formpack
-from formpack.constants import (
-    KOBO_LOCK_SHEET,
-)
+from formpack.constants import KOBO_LOCK_SHEET
 from formpack.schema.fields import (
     IdCopyField,
     NotesCopyField,
@@ -37,39 +39,47 @@ from formpack.schema.fields import (
 )
 from formpack.utils.kobo_locking import get_kobo_locking_profiles
 from formpack.utils.string import ellipsize
-from private_storage.fields import PrivateFileField
-from rest_framework import exceptions
-from werkzeug.http import parse_options_header
-from openpyxl.utils.exceptions import InvalidFileException
-from pyxform.xls2json_backends import xls_to_dict, xlsx_to_dict
-
+from kobo.apps.openrosa.libs.utils.common_tags import META_ROOT_UUID
 from kobo.apps.reports.report_data import build_formpack
-from kobo.apps.subsequences.utils import stream_with_extras
+from kobo.apps.storage_backends.base import default_kpi_private_storage
+from kobo.apps.subsequences.exceptions import SupplementMigrationInProgress
+from kobo.apps.subsequences.models import SubmissionSupplement
+from kobo.apps.subsequences.utils.supplement_data import (
+    get_analysis_form_json,
+    stream_with_supplements,
+)
 from kpi.constants import (
     ASSET_TYPE_COLLECTION,
     ASSET_TYPE_EMPTY,
     ASSET_TYPE_SURVEY,
     ASSET_TYPE_TEMPLATE,
     PERM_CHANGE_ASSET,
+    PERM_MANAGE_ASSET,
     PERM_PARTIAL_SUBMISSIONS,
     PERM_VIEW_SUBMISSIONS,
 )
-from kpi.exceptions import XlsFormatException
+from kpi.exceptions import ConcurrentExportException, XlsFormatException
 from kpi.fields import KpiUidField
 from kpi.models import Asset
-from kpi.utils.log import logging
-from kpi.utils.models import (
-    _load_library_content,
-    create_assets,
-    resolve_url_to_asset,
+from kpi.utils.data_exports import (
+    ACCESS_LOGS_EXPORT_FIELDS,
+    ASSET_FIELDS,
+    CONFIG,
+    PROJECT_HISTORY_LOGS_EXPORT_FIELDS,
+    SETTINGS,
+    create_data_export,
+    get_q,
 )
+from kpi.utils.log import logging
+from kpi.utils.models import _load_library_content, create_assets, resolve_url_to_asset
+from kpi.utils.project_views import get_region_for_view
 from kpi.utils.rename_xls_sheet import (
+    ConflictSheetError,
+    NoFromSheetError,
     rename_xls_sheet,
     rename_xlsx_sheet,
-    NoFromSheetError,
-    ConflictSheetError,
 )
-from kpi.utils.project_view_exports import create_project_view_export
+from kpi.utils.storage import is_filesystem_storage
 from kpi.utils.strings import to_str
 from kpi.zip_importer import HttpContentParse
 
@@ -85,6 +95,14 @@ def utcnow(*args, **kwargs):
     return datetime.datetime.now(tz=ZoneInfo('UTC'))
 
 
+class ImportExportStatusChoices(models.TextChoices):
+
+    CREATED = 'created', 'created'
+    PROCESSING = 'processing', 'processing'
+    COMPLETE = 'complete', 'complete'
+    ERROR = 'error', 'error'
+
+
 class ImportExportTask(models.Model):
     """
     A common base model for asynchronous import and exports. Must be
@@ -94,23 +112,14 @@ class ImportExportTask(models.Model):
     class Meta:
         abstract = True
 
-    CREATED = 'created'
-    PROCESSING = 'processing'
-    COMPLETE = 'complete'
-    ERROR = 'error'
-
-    STATUS_CHOICES = (
-        (CREATED, CREATED),
-        (PROCESSING, PROCESSING),
-        (ERROR, ERROR),
-        (COMPLETE, COMPLETE),
-    )
-
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     data = models.JSONField()
     messages = models.JSONField(default=dict)
-    status = models.CharField(choices=STATUS_CHOICES, max_length=32,
-                              default=CREATED)
+    status = models.CharField(
+        choices=ImportExportStatusChoices.choices,
+        max_length=32,
+        default=ImportExportStatusChoices.CREATED,
+    )
     date_created = models.DateTimeField(auto_now_add=True)
     # date_expired = models.DateTimeField(null=True)
 
@@ -121,37 +130,46 @@ class ImportExportTask(models.Model):
         asynchronous task runner (Celery)
         """
         with transaction.atomic():
-            _refetched_self = (
-                self._meta.model.objects.select_for_update().get(pk=self.pk)
+            _refetched_self = self._meta.model.objects.select_for_update().get(
+                pk=self.pk
             )
             self.status = _refetched_self.status
             del _refetched_self
-            if self.status == self.COMPLETE:
-                return
-            elif self.status != self.CREATED:
-                # possibly a concurrent task?
-                raise Exception(
+            if self.status == ImportExportStatusChoices.PROCESSING:
+                raise ConcurrentExportException(
                     'only recently created {}s can be executed'.format(
                         self._meta.model_name)
                 )
-            self.status = self.PROCESSING
+            elif self.status in (
+                ImportExportStatusChoices.COMPLETE,
+                ImportExportStatusChoices.ERROR,
+            ):
+                # There is no action to take. To retry an `ERROR`ed export, the
+                # status must first be reset to `CREATED`
+                return
+            elif self.status != ImportExportStatusChoices.CREATED:
+                # Sanity check in case someone adds a new export status without
+                # updating this code
+                raise NotImplementedError
+
+            self.status = ImportExportStatusChoices.PROCESSING
             self.save(update_fields=['status'])
 
         msgs = defaultdict(list)
         try:
             # This method must be implemented by a subclass
             self._run_task(msgs)
-            self.status = self.COMPLETE
-        except ExportTaskBase.InaccessibleData as e:
+            self.status = ImportExportStatusChoices.COMPLETE
+        except SubmissionExportTaskBase.InaccessibleData as e:
             msgs['error_type'] = t('Cannot access data')
             msgs['error'] = str(e)
-            self.status = self.ERROR
+            self.status = ImportExportStatusChoices.ERROR
         # TODO: continue to make more specific exceptions as above until this
         # catch-all can be removed entirely
         except Exception as err:
             msgs['error_type'] = type(err).__name__
             msgs['error'] = str(err)
-            self.status = self.ERROR
+            self.status = ImportExportStatusChoices.ERROR
             logging.error(
                 'Failed to run %s: %s' % (self._meta.model_name, repr(err)),
                 exc_info=True
@@ -165,7 +183,7 @@ class ImportExportTask(models.Model):
         try:
             self.save(update_fields=['status', 'messages', 'data'])
         except TypeError as e:
-            self.status = self.ERROR
+            self.status = ImportExportStatusChoices.ERROR
             logging.error('Failed to save %s: %s' % (self._meta.model_name,
                                                      repr(e)),
                           exc_info=True)
@@ -193,7 +211,7 @@ class ImportExportTask(models.Model):
         # Copied from `FileSystemStorage._save()` 😢
         # TODO avoid duplicating Django FileSystemStorage class code and find
         #   a way to use `self.result.save()`
-        if isinstance(storage_class, FileSystemStorage):
+        if is_filesystem_storage(storage_class):
             full_path = storage_class.path(filename)
 
             # Create any intermediate directories that do not exist.
@@ -218,7 +236,7 @@ class ImportExportTask(models.Model):
                     # was created concurrently.
                     pass
             if not os.path.isdir(directory):
-                raise IOError("%s exists and is not a directory." % directory)
+                raise IOError('%s exists and is not a directory.' % directory)
 
             # Store filenames with forward slashes, even on Windows.
             filename = filename.replace('\\', '/')
@@ -244,7 +262,7 @@ class ImportTask(ImportExportTask):
         ]
 
     def _run_task(self, messages):
-        self.status = self.PROCESSING
+        self.status = ImportExportStatusChoices.PROCESSING
         self.save(update_fields=['status'])
         dest_item = has_necessary_perm = False
 
@@ -302,7 +320,6 @@ class ImportTask(ImportExportTask):
             # When a file is uploaded as base64,
             # no name is provided in the encoded string
             # We should rely on self.data.get(:filename:)
-
             self._parse_b64_upload(
                 base64_encoded_upload=self.data['base64Encoded'],
                 filename=filename,
@@ -336,7 +353,9 @@ class ImportTask(ImportExportTask):
 
         if destination_collection and not has_necessary_perm:
             # redundant check
-            raise exceptions.PermissionDenied('user cannot load assets into this collection')
+            raise exceptions.PermissionDenied(
+                'user cannot load assets into this collection'
+            )
 
         collections_to_assign = []
         for item in fif._parsed:
@@ -369,7 +388,8 @@ class ImportTask(ImportExportTask):
                             'uid': asset.uid,
                             'kind': 'asset',
                             'owner__username': self.user.username,
-                        })
+                        }
+                    )
 
             if item.parent:
                 collections_to_assign.append([
@@ -447,6 +467,13 @@ class ImportTask(ImportExportTask):
                     asset_type=asset_type,
                     summary={'filename': filename},
                 )
+                # OC XLS export always injects form_title into settings, which
+                # overrides the name set from summary['filename'] during save.
+                # Use a direct DB update to bypass Asset.save() hooks (which
+                # would raise AssetAdjustContentError on name-only saves).
+                if filename:
+                    Asset.objects.filter(pk=asset.pk).update(name=filename)
+                    asset.name = filename
                 msg_key = 'created'
             else:
                 asset = destination
@@ -459,8 +486,22 @@ class ImportTask(ImportExportTask):
                         base64_encoded_upload, survey_dict
                     )
                 asset.content = survey_dict
+                old_name = asset.name
+                # saving sometimes changes the name
                 asset.save()
                 msg_key = 'updated'
+                messages['audit_logs'].append(
+                    {
+                        'asset_uid': asset.uid,
+                        'asset_id': asset.id,
+                        'latest_version_uid': asset.latest_version.uid,
+                        'ip_address': self.data.get('ip_address', None),
+                        'source': self.data.get('source', None),
+                        'old_name': old_name,
+                        'new_name': asset.name,
+                        'project_owner': asset.owner.username,
+                    }
+                )
 
             messages[msg_key].append({
                 'uid': asset.uid,
@@ -481,29 +522,37 @@ def export_upload_to(self, filename):
     more information, see
     https://docs.djangoproject.com/en/1.8/topics/migrations/#serializing-values
     """
+
+    if hasattr(self, 'asset'):
+        return posixpath.join(self.user.username, 'exports', self.asset.uid, filename)
+
+    if getattr(self, 'asset_uid', None):
+        return posixpath.join(self.user.username, 'exports', self.asset_uid, filename)
+
     return posixpath.join(self.user.username, 'exports', filename)
 
 
-class ProjectViewExportTask(ImportExportTask):
-    uid = KpiUidField(uid_prefix='pve')
-    result = PrivateFileField(upload_to=export_upload_to, max_length=380)
+class ExportTaskMixin:
+
+    @property
+    def default_email_subject(self) -> str:
+        return 'Report Complete'
+
+    def _get_export_details(self) -> tuple:
+        return self.data.get('type'), self.data.get('view', None)
 
     def _build_export_filename(
-        self, export_type: str, username: str, view: str
+        self, export_type: str, username: str, view: str = None
     ) -> str:
-        time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
-        return f'{export_type}-{username}-view_{view}-{time}.csv'
+        time = timezone.now().strftime('%Y-%m-%dT%H:%M:%SZ')
+        if view:
+            return f'{export_type}-{username}-view_{view}-{time}.csv'
+        return f'{export_type}-{username}-{time}.csv'
 
-    def _run_task(self, messages: list) -> None:
-        export_type = self.data['type']
-        view = self.data['view']
-
-        filename = self._build_export_filename(
-            export_type, self.user.username, view
-        )
+    def _export_data_to_file(self, messages: list, buff) -> None:
+        export_type, view = self._get_export_details()
+        filename = self._build_export_filename(export_type, self.user.username, view)
         absolute_filepath = self.get_absolute_filepath(filename)
-
-        buff = create_project_view_export(export_type, self.user.username, view)
 
         with self.result.storage.open(absolute_filepath, 'wb') as output_file:
             output_file.write(buff.read().encode())
@@ -517,7 +566,172 @@ class ProjectViewExportTask(ImportExportTask):
         super().delete(*args, **kwargs)
 
 
-class ExportTaskBase(ImportExportTask):
+class AuditLogExportTaskMixin:
+    @staticmethod
+    def filter_remaining_metadata(row, accessed_fields):
+        metadata = row['other_details']
+        if metadata is not None:
+            return {
+                key: value
+                for key, value in metadata.items()
+                if key not in accessed_fields
+            }
+
+    @staticmethod
+    def user_url():
+        return Concat(
+            Value(f'{settings.KOBOFORM_URL}/api/v2/users/'),
+            F('user__username'),
+            output_field=CharField(),
+        )
+
+    common_fields = {
+        'user_url': user_url(),
+        'username': F('user__username'),
+        'source': F('metadata__source'),
+        'ip_address': F('metadata__ip_address'),
+        'other_details': F('metadata'),
+    }
+
+
+class AccessLogExportTask(ExportTaskMixin, AuditLogExportTaskMixin, ImportExportTask):
+    uid = KpiUidField(uid_prefix='ale')
+    get_all_logs = models.BooleanField(default=False)
+    result = PrivateFileField(
+        storage=default_kpi_private_storage, upload_to=export_upload_to, max_length=380
+    )
+
+    @property
+    def default_email_subject(self) -> str:
+        return 'Access Log Report Complete'
+
+    def get_data(self, filtered_queryset: QuerySet) -> QuerySet:
+        return filtered_queryset.annotate(
+            **self.common_fields,
+            auth_type=F('metadata__auth_type'),
+            initial_superusername=F('metadata__initial_user_username'),
+            initial_superuseruid=F('metadata__initial_user_uid'),
+            authorized_application=F('metadata__authorized_app_name'),
+        ).values(*ACCESS_LOGS_EXPORT_FIELDS)
+
+    def _run_task(self, messages: list) -> None:
+        if self.get_all_logs and not self.user.is_superuser:
+            raise PermissionError('Only superusers can export all access logs.')
+
+        export_type, view = self._get_export_details()
+        config = CONFIG[export_type]
+
+        queryset = config['queryset']()
+        if not self.get_all_logs:
+            queryset = queryset.filter(user__username=self.user.username)
+        data = self.get_data(queryset)
+        accessed_metadata_fields = [
+            'auth_type',
+            'source',
+            'ip_address',
+            'initial_user_username',
+            'initial_user_uid',
+            'authorized_app_name',
+        ]
+        for row in data:
+            row['other_details'] = self.filter_remaining_metadata(
+                row, accessed_metadata_fields
+            )
+        buff = create_data_export(export_type, data)
+        self._export_data_to_file(messages, buff)
+
+
+class ProjectHistoryLogExportTask(
+    ExportTaskMixin, AuditLogExportTaskMixin, ImportExportTask
+):
+    uid = KpiUidField(uid_prefix='phe')
+    result = PrivateFileField(
+        storage=default_kpi_private_storage,
+        upload_to=export_upload_to,
+        max_length=380,
+    )
+    asset_uid = models.CharField(null=True)
+
+    @property
+    def default_email_subject(self) -> str:
+        return 'Project activity log export complete'
+
+    def get_data(self, filtered_queryset: QuerySet) -> QuerySet:
+        return filtered_queryset.annotate(
+            **self.common_fields,
+            asset_uid=F('metadata__asset_uid'),
+        ).values(*PROJECT_HISTORY_LOGS_EXPORT_FIELDS)
+
+    def _run_task(self, messages: list) -> None:
+        if self.asset_uid is None and not self.user.is_superuser:
+            raise PermissionError(
+                'Only superusers can export all project history logs.'
+            )
+        elif self.asset_uid is not None:
+            survey = Asset.objects.get(uid=self.asset_uid)
+            if not survey.has_perm(user_obj=self.user, perm=PERM_MANAGE_ASSET):
+                raise PermissionError(
+                    'User does not have permission to export logs for this asset.'
+                )
+
+        export_type, view = self._get_export_details()
+        config = CONFIG[export_type]
+
+        queryset = config['queryset']()
+        if self.asset_uid is not None:
+            queryset = queryset.filter(metadata__asset_uid=self.asset_uid)
+        data = self.get_data(queryset)
+        accessed_metadata_fields = [
+            'source',
+            'ip_address',
+            'asset_uid',
+        ]
+        for row in data:
+            row['other_details'] = self.filter_remaining_metadata(
+                row, accessed_metadata_fields
+            )
+        buff = create_data_export(export_type, data)
+        self._export_data_to_file(messages, buff)
+
+
+class ProjectViewExportTask(ExportTaskMixin, ImportExportTask):
+    uid = KpiUidField(uid_prefix='pve')
+    result = PrivateFileField(
+        storage=default_kpi_private_storage,
+        upload_to=export_upload_to,
+        max_length=380,
+    )
+
+    @property
+    def default_email_subject(self) -> str:
+        return 'Project View Report Complete'
+
+    def get_data(self, filtered_queryset: QuerySet) -> QuerySet:
+        vals = ASSET_FIELDS + (SETTINGS,)
+        return (
+            filtered_queryset.annotate(
+                owner__name=F('owner__extra_details__data__name'),
+                owner__organization=F('owner__extra_details__data__organization'),
+                form_id=F('_deployment_data__backend_response__formid'),
+            )
+            .values(*vals)
+            .order_by('id')
+        )
+
+    def _run_task(self, messages: list) -> None:
+        export_type, view = self._get_export_details()
+        config = CONFIG[export_type]
+
+        region_for_view = get_region_for_view(view)
+        q = get_q(region_for_view, export_type)
+        queryset = config['queryset'].filter(q)
+
+        data = self.get_data(queryset)
+        buff = create_data_export(export_type, data)
+        self._export_data_to_file(messages, buff)
+
+
+class SubmissionExportTaskBase(ImportExportTask):
     """
     An (asynchronous) submission data export job. The instantiator must set the
     `data` attribute to a dictionary with the following keys:
@@ -555,7 +769,9 @@ class ExportTaskBase(ImportExportTask):
 
     uid = KpiUidField(uid_prefix='e')
     last_submission_time = models.DateTimeField(null=True)
-    result = PrivateFileField(upload_to=export_upload_to, max_length=380)
+    result = PrivateFileField(
+        storage=default_kpi_private_storage, upload_to=export_upload_to, max_length=380
+    )
 
     COPY_FIELDS = (
         IdCopyField,
@@ -570,6 +786,7 @@ class ExportTaskBase(ImportExportTask):
         '_submitted_by',
         '__version__',
         TagsCopyField,
+        META_ROOT_UUID,
     )
 
     # It's not very nice to ask our API users to submit `null` or `false`,
@@ -581,8 +798,9 @@ class ExportTaskBase(ImportExportTask):
     }
 
     TIMESTAMP_KEY = '_submission_time'
-    # Above 244 seems to cause 'Download error' in Chrome 64/Linux
-    MAXIMUM_FILENAME_LENGTH = 240
+    # Above 244 seems to cause 'Download error' in Chrome 64/Linux and above
+    # 207 causes a 'Filename too long' error in Excel
+    MAXIMUM_FILENAME_LENGTH = 207
 
     class InaccessibleData(Exception):
         def __str__(self):
@@ -758,7 +976,6 @@ class ExportTaskBase(ImportExportTask):
         `PrivateFileField`. Should be called by the `run()` method of the
         superclass. The `submission_stream` method is provided for testing
         """
-        source_url = self.data.get('source', False)
         flatten = self.data.get('flatten', True)
         export_type = self.data.get('type', '').lower()
         if export_type == 'xlsx':
@@ -778,7 +995,7 @@ class ExportTaskBase(ImportExportTask):
         with self.result.storage.open(absolute_filepath, 'wb') as output_file:
             if export_type == 'csv':
                 for line in export.to_csv(submission_stream):
-                    output_file.write((line + "\r\n").encode('utf-8'))
+                    output_file.write((line + '\r\n').encode('utf-8'))
             elif export_type == 'geojson':
                 for line in export.to_geojson(
                     submission_stream, flatten=flatten
@@ -788,7 +1005,7 @@ class ExportTaskBase(ImportExportTask):
                 # XLSX export actually requires a filename (limitation of
                 # pyexcelerate?)
                 with tempfile.NamedTemporaryFile(
-                        prefix='export_xlsx', mode='rb'
+                    prefix='export_xlsx', mode='rb'
                 ) as xlsx_output_file:
                     export.to_xlsx(xlsx_output_file.name, submission_stream)
                     # TODO: chunk again once
@@ -817,6 +1034,16 @@ class ExportTaskBase(ImportExportTask):
         else:
             self.save(update_fields=['result', 'last_submission_time'])
 
+    @property
+    def asset(self):
+        source_url = self.data.get('source', False)
+        if not source_url:
+            raise Exception('no source specified for the export')
+        try:
+            return resolve_url_to_asset(source_url)
+        except Asset.DoesNotExist:
+            raise self.InaccessibleData
+
     def delete(self, *args, **kwargs):
         # removing exported file from storage
         self.result.delete(save=False)
@@ -834,13 +1061,7 @@ class ExportTaskBase(ImportExportTask):
         submission_ids = self.data.get('submission_ids', [])
 
         if source is None:
-            source_url = self.data.get('source', False)
-            if not source_url:
-                raise Exception('no source specified for the export')
-            try:
-                source = resolve_url_to_asset(source_url)
-            except Asset.DoesNotExist:
-                raise self.InaccessibleData
+            source = self.asset
 
         source_perms = source.get_perms(self.user)
         if (
@@ -863,19 +1084,28 @@ class ExportTaskBase(ImportExportTask):
         )
 
         if source.has_advanced_features:
-            extr = dict(
-                source.submission_extras.values_list(
-                    'submission_uuid', 'content'
+            # Use a cheap EXISTS query before the expensive full prefetch in
+            # stream_with_supplements. If old supplements are found we block
+            # the export with a clear message rather than crashing mid-stream.
+            if source.advanced_features_set.exists() and (
+                SubmissionSupplement.objects.filter(asset=source)
+                .exclude(content__has_key='_version')
+                .exclude(content={})
+                .exists()
+            ):
+                raise SupplementMigrationInProgress(
+                    'Supplement data migration in progress, please retry later.'
                 )
+            submission_stream = stream_with_supplements(
+                source, submission_stream, for_output=True
             )
-            submission_stream = stream_with_extras(submission_stream, extr)
 
         pack, submission_stream = build_formpack(
             source, submission_stream, self._fields_from_all_versions
         )
 
         if source.has_advanced_features:
-            pack.extend_survey(source.analysis_form_json())
+            pack.extend_survey(get_analysis_form_json(source))
 
         # Wrap the submission stream in a generator that records the most
         # recent timestamp
@@ -908,7 +1138,12 @@ class ExportTaskBase(ImportExportTask):
             user=user,
             date_created__lt=oldest_allowed_timestamp,
             data__source=source,
-        ).exclude(status__in=(cls.COMPLETE, cls.ERROR))
+        ).exclude(
+            status__in=(
+                ImportExportStatusChoices.COMPLETE,
+                ImportExportStatusChoices.ERROR,
+            )
+        )
         for stuck_export in stuck_exports:
             logging.warning(
                 'Stuck export {}: type {}, username {}, source {}, '
@@ -921,7 +1156,7 @@ class ExportTaskBase(ImportExportTask):
                 )
             )
             # FIXME: use `select_for_update`
-            stuck_export.status = cls.ERROR
+            stuck_export.status = ImportExportStatusChoices.ERROR
             stuck_export.save()
 
     @classmethod
@@ -945,7 +1180,7 @@ class ExportTaskBase(ImportExportTask):
             export.delete()
 
 
-class ExportTask(ExportTaskBase):
+class SubmissionExportTask(SubmissionExportTaskBase):
     """
     An asynchronous export task, to be run with Celery
     """
@@ -966,7 +1201,7 @@ class ExportTask(ExportTaskBase):
         self.remove_excess(self.user, source_url)
 
 
-class SynchronousExport(ExportTaskBase):
+class SubmissionSynchronousExport(SubmissionExportTaskBase):
     """
     A synchronous export, with significant limitations on processing time, but
     offered for user convenience
@@ -983,42 +1218,43 @@ class SynchronousExport(ExportTaskBase):
         unique_together = (('user', 'asset_export_settings', 'format_type'),)
 
     @classmethod
-    def generate_or_return_existing(cls, user, asset_export_settings):
+    def generate_or_return_existing(cls, user, asset_export_settings, request=None):
         age_cutoff = utcnow() - datetime.timedelta(
             seconds=constance.config.SYNCHRONOUS_EXPORT_CACHE_MAX_AGE
         )
         format_type = asset_export_settings.export_settings['type']
         data = asset_export_settings.export_settings.copy()
-        data['source'] = reverse(
-            'asset-detail', args=[asset_export_settings.asset.uid]
+        asset_url = reverse(
+            'asset-detail', args=[asset_export_settings.asset.uid], request=request
         )
+        # Keep only the relative URL, do not hardcode the domain name
+        data['source'] = asset_url.replace(settings.KOBOFORM_URL, '')
         criteria = {
             'user': user,
             'asset_export_settings': asset_export_settings,
             'format_type': format_type,
         }
 
-        # An object (a row) must be created (inserted) before it can be locked
-        cls.objects.get_or_create(**criteria, defaults={'data': data})
+        export, _ = cls.objects.get_or_create(**criteria, defaults={'data': data})
+        if export.date_created < age_cutoff:
+            # The existing export is too old; reset its state so it can be
+            # reborn
+            with transaction.atomic():
+                export = cls.objects.select_for_update().get(**criteria)
+                export.data = data
+                export.status = ImportExportStatusChoices.CREATED
+                export.date_created = utcnow()
+                export.result.delete(save=False)
+                export.save()
 
-        with transaction.atomic():
-            # Lock the object (and block until a lock can be obtained) to
-            # prevent the same export from running concurrently
-            export = cls.objects.select_for_update().get(**criteria)
-
-            if (
-                export.status == cls.COMPLETE
-                and export.date_created >= age_cutoff
-            ):
-                return export
-
-            export.data = data
-            export.status = cls.CREATED
-            export.date_created = utcnow()
-            export.result.delete(save=False)
-            export.save()
+        try:
             export.run()
-            return export
+        except ConcurrentExportException:
+            # It's the caller's responsibility to interpret the `PENDING`
+            # status of the export appropriately
+            pass
+
+        return export
 
 
 def _get_xls_format(decoded_str):

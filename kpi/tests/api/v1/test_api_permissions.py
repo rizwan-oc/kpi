@@ -1,10 +1,13 @@
 # coding: utf-8
-from django.contrib.auth.models import User
+import unittest
+
 from django.urls import reverse
 from rest_framework import status
 
+from kobo.apps.kobo_auth.shortcuts import User
 from kpi.constants import ASSET_TYPE_COLLECTION
 from kpi.models import Asset, ObjectPermission
+
 # importing module instead of the class, avoid running the tests twice
 from kpi.tests.api.v2 import test_api_permissions
 from kpi.tests.kpi_test_case import KpiTestCase
@@ -14,9 +17,35 @@ from kpi.utils.object_permission import get_anonymous_user
 class ApiAnonymousPermissionsTestCase(test_api_permissions.ApiAnonymousPermissionsTestCase):
     URL_NAMESPACE = None
 
+    def test_anon_list_assets(self):
+        # OC requires authentication for all asset access; anonymous requests
+        # return 401, not 200. Override the upstream assertion accordingly.
+        url = reverse(self._get_endpoint('asset-list'))
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_anon_asset_detail(self):
+        # OC requires authentication for all asset access; anonymous requests
+        # return 401, not 200. Override the upstream assertion accordingly.
+        url = reverse(
+            self._get_endpoint('asset-detail'),
+            kwargs={'uid_asset': self.anon_accessible.uid},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
 
 class ApiPermissionsPublicAssetTestCase(test_api_permissions.ApiPermissionsPublicAssetTestCase):
     URL_NAMESPACE = None
+
+    @unittest.skip(
+        'OC requires authentication; anonymous users always receive 401 so '
+        'the public-asset viewability assertions in the upstream test are not '
+        'meaningful here. The permission-revoke path is covered by the v2 '
+        'variant of this test.'
+    )
+    def test_revoke_anon_from_asset_in_public_collection(self):
+        pass
 
 
 class ApiPermissionsTestCase(test_api_permissions.ApiPermissionsTestCase):
@@ -40,7 +69,7 @@ class ApiAssignedPermissionsTestCase(KpiTestCase):
     def setUp(self):
         super().setUp()
         self.anon = get_anonymous_user()
-        self.super = User.objects.get(username='admin')
+        self.super = User.objects.get(username='adminuser')
         self.super_password = 'pass'
         self.someuser = User.objects.get(username='someuser')
         self.someuser_password = 'someuser'

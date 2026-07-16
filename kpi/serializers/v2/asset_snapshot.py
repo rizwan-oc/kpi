@@ -2,18 +2,21 @@
 from rest_framework import exceptions, serializers
 from rest_framework.relations import HyperlinkedIdentityField
 from rest_framework.reverse import reverse
-from bossoidc2.models import Keycloak as KeycloakModel
+from kobo.apps.oc_tenant_auth.models import KeycloakTenantUser as KeycloakModel
 
 from kpi.constants import PERM_VIEW_ASSET
 from kpi.fields import RelativePrefixHyperlinkedRelatedField, WritableJSONField
 from kpi.models import Asset, AssetSnapshot
-from kpi.utils.permissions import is_owner_in_subdomain
+from kpi.utils.object_permission import get_database_user
+from kobo.apps.oc_tenant_auth.utils import is_owner_in_subdomain
 
 
 class AssetSnapshotSerializer(serializers.HyperlinkedModelSerializer):
     url = HyperlinkedIdentityField(
-         lookup_field='uid',
-         view_name='assetsnapshot-detail')
+        lookup_field='uid',
+        lookup_url_kwarg='uid_asset_snapshot',
+        view_name='assetsnapshot-detail',
+    )
     uid = serializers.ReadOnlyField()
     xml = serializers.SerializerMethodField()
     enketopreviewlink = serializers.SerializerMethodField()
@@ -22,12 +25,13 @@ class AssetSnapshotSerializer(serializers.HyperlinkedModelSerializer):
         queryset=Asset.objects.all(),
         view_name='asset-detail',
         lookup_field='uid',
+        lookup_url_kwarg='uid_asset',
         required=False,
         allow_null=True,
         style={'base_template': 'input.html'}  # Render as a simple text box
     )
     owner = RelativePrefixHyperlinkedRelatedField(
-        view_name='user-detail',
+        view_name='user-kpi-detail',
         lookup_field='username',
         read_only=True
     )
@@ -54,6 +58,10 @@ class AssetSnapshotSerializer(serializers.HyperlinkedModelSerializer):
         # Check if asset owner id in subdomain userIds
         user = self.context['request'].user
 
+        # Anonymous users have no Keycloak record; skip subdomain check.
+        if user.is_anonymous:
+            return
+
         if isinstance(asset, dict) and 'owner' in asset:
             asset_owner = asset['owner']
         else:
@@ -79,13 +87,11 @@ class AssetSnapshotSerializer(serializers.HyperlinkedModelSerializer):
         # NB: validated_data is not used when linking to an existing asset
         # without specifying source; in that case, the snapshot owner is the
         # asset's owner, even if a different user makes the request
-        validated_data['owner'] = self.context['request'].user
+        validated_data['owner'] = get_database_user(self.context['request'].user)
 
         if source:
-            self.check_subdomain_permission(validated_data)
             snapshot = AssetSnapshot.objects.create(**validated_data)
         else:
-            self.check_subdomain_permission(asset)
             # asset.snapshot pulls, by default, a snapshot for the latest
             # version.
             snapshot = asset.snapshot()
@@ -97,7 +103,7 @@ class AssetSnapshotSerializer(serializers.HyperlinkedModelSerializer):
     def get_enketopreviewlink(self, obj):
         return reverse(
             viewname='assetsnapshot-preview',
-            kwargs={'uid': obj.uid},
+            kwargs={'uid_asset_snapshot': obj.uid},
             request=self.context.get('request', None)
         )
 
@@ -113,13 +119,13 @@ class AssetSnapshotSerializer(serializers.HyperlinkedModelSerializer):
         return reverse(
             viewname='assetsnapshot-detail',
             format='xml',
-            kwargs={'uid': obj.uid},
+            kwargs={'uid_asset_snapshot': obj.uid},
             request=self.context.get('request', None)
         )
 
     def validate(self, attrs):
 
-        user = self.context['request'].user
+        user = get_database_user(self.context['request'].user)
 
         asset = attrs.get('asset', False)
         source = attrs.get('source', False)

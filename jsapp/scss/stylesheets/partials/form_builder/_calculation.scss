@@ -1,4 +1,4 @@
-@use '~kobo-common/src/styles/colors';
+@use 'scss/colors';
 
 // Higher specificity than .js-calculation-tab { display: flex }
 // so this rule wins when both classes are present.

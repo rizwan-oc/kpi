@@ -1,12 +1,12 @@
 _ = require 'underscore'
 
-choices_templates = require './view.choices.templates'
+choices_templates =        require './view.choices.templates'
 accepted_files_templates = require './view.acceptedFiles.templates'
-params_templates = require './view.params.templates'
-row_templates = require './view.row.templates'
-rowDetail_templates = require './view.rowDetail.templates'
-rowSelector_templates = require './view.rowSelector.templates'
-surveyApp_templates = require './view.surveyApp.templates'
+params_templates =         require './view.params.templates'
+row_templates =            require './view.row.templates'
+rowDetail_templates =      require './view.rowDetail.templates'
+rowSelector_templates =    require './view.rowSelector.templates'
+surveyApp_templates =      require './view.surveyApp.templates'
 
 module.exports = do ->
   templates =
@@ -17,15 +17,17 @@ module.exports = do ->
     rowSelector: rowSelector_templates
     surveyApp: surveyApp_templates
 
-  templates['AcceptedFilesView.input'] = accepted_files_templates.acceptedFilesInput
-  templates['ParamsView.numberParam'] = params_templates.numberParam
-  templates['ParamsView.booleanParam'] = params_templates.booleanParam
+  templates['AcceptedFilesView.input']      = accepted_files_templates.acceptedFilesInput
+  templates['ParamsView.numberParam']       = params_templates.numberParam
+  templates['ParamsView.booleanParam']      = params_templates.booleanParam
+  templates['ParamsView.maxPixelsParam']    = params_templates.maxPixelsParam
   templates['xlfListView.addOptionButton']  = choices_templates.addOptionButton
   templates['row.mandatorySettingSelector'] = row_templates.mandatorySettingSelector
   templates['row.requiredLogicPanel']       = row_templates.requiredLogicPanel
   templates['row.defaultValuePanel']        = row_templates.defaultValuePanel
   templates['row.rowErrorView']             = row_templates.rowErrorView
   templates['row.xlfRowView']               = row_templates.xlfRowView
+  templates['row.unsupportedRowView']       = row_templates.unsupportedRowView
   templates['row.calculationPanel']         = row_templates.calculationPanel
   templates['row.scoreView']                = row_templates.scoreView
   templates['row.rankView']                 = row_templates.rankView
@@ -43,8 +45,8 @@ module.exports = do ->
       throw new Error("Template not available: '#{id}'")
     unless 'function' is typeof template
       throw new Error("Template not a function: '#{id}'")
-    template(params...)
+    return template(params...)
 
   templates.$$render = $$render
 
-  templates
+  return templates

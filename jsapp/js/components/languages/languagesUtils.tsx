@@ -1,28 +1,19 @@
-import React from 'react';
-import languagesStore from './languagesStore';
-import type {LanguageCode} from './languagesStore';
+import React, { useEffect, useState } from 'react'
 
-interface LanguageDisplayLabelProps {
-  code: LanguageCode;
-  name: string;
-}
+import { recordKeys } from '#/utils'
+import languagesStore from './languagesStore'
+import type { LanguageCode } from './languagesStore'
 
 /**
  * A simpler alternative to `AsyncLanguageDisplayLabel` for situations when you
  * already possess all necessary data.
  */
-export class LanguageDisplayLabel extends React.Component<LanguageDisplayLabelProps> {
-  render() {
-    return <span>{this.props.name}&nbsp;<small>({this.props.code})</small></span>;
-  }
-}
-
-interface AsyncLanguageDisplayLabelProps {
-  code: LanguageCode;
-}
-interface AsyncLanguageDisplayLabelState {
-  name?: string;
-  isLoading: boolean;
+export function LanguageDisplayLabel(props: { code: LanguageCode; name: string }) {
+  return (
+    <span>
+      {props.name}&nbsp;<small>({props.code})</small>
+    </span>
+  )
 }
 
 /**
@@ -33,42 +24,33 @@ interface AsyncLanguageDisplayLabelState {
  *
  * Displays provided `LanguageCode` as fallback mechanism.
  */
-export class AsyncLanguageDisplayLabel extends React.Component<
-  AsyncLanguageDisplayLabelProps,
-  AsyncLanguageDisplayLabelState
-> {
-  constructor(props: AsyncLanguageDisplayLabelProps) {
-    super(props);
-    this.state = {isLoading: true};
-  }
+export function AsyncLanguageDisplayLabel(props: { code: LanguageCode }) {
+  const [name, setName] = useState<string | undefined>(undefined)
+  const [isLoading, setIsLoading] = useState<boolean>(true)
 
-  componentDidMount() {
-    this.getData();
-  }
+  useEffect(() => {
+    getData()
+  }, [props.code])
 
-  async getData() {
-    this.setState({isLoading: true});
+  async function getData() {
+    setIsLoading(true)
     try {
-      const name = await languagesStore.getLanguageName(this.props.code);
-      this.setState({
-        name: name,
-        isLoading: false,
-      });
+      const foundName = await languagesStore.getLanguageName(props.code)
+      setName(foundName)
+      setIsLoading(false)
     } catch (error) {
-      console.error(`Language ${this.props.code} not found 5`);
-      this.setState({isLoading: false});
+      console.error(`Language ${props.code} not found 5`)
+      setIsLoading(false)
     }
   }
 
-  render() {
-    if (this.state.isLoading) {
-      return <span>…</span>;
-    }
-    if (this.state.name) {
-      return <LanguageDisplayLabel code={this.props.code} name={this.state.name}/>;
-    }
+  if (isLoading) {
+    return <span>…</span>
+  } else if (name) {
+    return <LanguageDisplayLabel code={props.code} name={name} />
+  } else {
     // Display code as fallback mechanism.
-    return this.props.code;
+    return props.code
   }
 }
 
@@ -77,33 +59,33 @@ export class AsyncLanguageDisplayLabel extends React.Component<
  * `AsyncLanguageDisplayLabel` (they both produce a `JSX.Element`).
  */
 export function getLanguageDisplayLabel(name: string, code: LanguageCode) {
-  return `${name} (${code})`;
+  return `${name} (${code})`
 }
 
 /** Checks if given language has any automated transcription services available. */
 export async function hasTranscriptServicesAvailable(code: LanguageCode): Promise<boolean> {
   try {
-    const language = await languagesStore.getLanguage(code);
+    const language = await languagesStore.getLanguage(code)
     if (language) {
-      return Object.keys(language.transcription_services).length >= 1;
+      return recordKeys(language.transcription_services).length >= 1
     } else {
-      return false;
+      return false
     }
   } catch (error) {
-    return false;
+    return false
   }
 }
 
 /** Checks if given language has any automated translation services available. */
 export async function hasTranslationServicesAvailable(code: LanguageCode): Promise<boolean> {
   try {
-    const language = await languagesStore.getLanguage(code);
+    const language = await languagesStore.getLanguage(code)
     if (language) {
-      return Object.keys(language.transcription_services).length >= 1;
+      return recordKeys(language.transcription_services).length >= 1
     } else {
-      return false;
+      return false
     }
   } catch (error) {
-    return false;
+    return false
   }
 }

@@ -1,154 +1,130 @@
 # coding: utf-8
-from rest_framework import (
-    filters,
-    renderers,
-)
+import datetime
+
+from django.conf import settings
+from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
+from rest_framework import filters, status
+from rest_framework.response import Response
+from rest_framework.reverse import reverse
 from rest_framework_extensions.mixins import NestedViewSetMixin
 
+from kobo.apps.audit_log.base_views import AuditLoggedNoUpdateModelViewSet
+from kobo.apps.audit_log.models import AuditType
 from kpi.filters import SearchFilter
-from kpi.models import ExportTask
+from kpi.models import SubmissionExportTask
+from kpi.models.import_export_task import ImportExportStatusChoices
 from kpi.permissions import ExportTaskPermission
+from kpi.schema_extensions.v2.export_tasks.serializers import (
+    ExportCreatePayload,
+    ExportResponse,
+)
 from kpi.serializers.v2.export_task import ExportTaskSerializer
 from kpi.utils.object_permission import get_database_user
+from kpi.utils.permissions import is_user_anonymous
+from kpi.utils.schema_extensions.markdown import read_md
+from kpi.utils.schema_extensions.response import (
+    open_api_200_ok_response,
+    open_api_201_created_response,
+    open_api_204_empty_response,
+)
 from kpi.utils.viewset_mixins import AssetNestedObjectViewsetMixin
-from kpi.views.no_update_model import NoUpdateModelViewSet
 
 
+@extend_schema(
+    tags=['Survey data'],
+    parameters=[
+        OpenApiParameter(
+            name='uid_asset',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='UID of the parent asset',
+        ),
+    ],
+)
+@extend_schema_view(
+    create=extend_schema(
+        description=read_md('kpi', 'export_tasks/create.md'),
+        request={'application/json': ExportCreatePayload},
+        responses=open_api_201_created_response(
+            ExportResponse,
+            require_auth=False,
+        ),
+    ),
+    destroy=extend_schema(
+        description=read_md('kpi', 'export_tasks/delete.md'),
+        responses=open_api_204_empty_response(
+            require_auth=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_export',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the export task',
+            ),
+        ],
+    ),
+    list=extend_schema(
+        description=read_md('kpi', 'export_tasks/list.md'),
+        responses=open_api_200_ok_response(
+            ExportResponse,
+            validate_payload=False,
+            require_auth=False,
+        ),
+    ),
+    partial_update=extend_schema(
+        exclude=True,
+    ),
+    retrieve=extend_schema(
+        description=read_md('kpi', 'export_tasks/retrieve.md'),
+        responses=open_api_200_ok_response(
+            ExportResponse,
+            require_auth=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_export',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the export task',
+            ),
+        ],
+    ),
+    update=extend_schema(
+        exclude=True,
+    ),
+)
 class ExportTaskViewSet(
-    AssetNestedObjectViewsetMixin, NestedViewSetMixin, NoUpdateModelViewSet
+    AssetNestedObjectViewsetMixin, NestedViewSetMixin, AuditLoggedNoUpdateModelViewSet
 ):
     """
-    ## List of export tasks endpoints
-
-    Lists the export tasks accessible to requesting user, for anonymous access
-    nothing is returned.
-
-    > Required permissions: `view_submissions` (View submissions)
-
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/assets/<code>{asset_uid}</code>/exports/
-    </pre>
-
-    > Examples
-    >
-    >       curl -X GET https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/exports/
-
-    > The list can be filtered with the [query parser](https://github.com/kobotoolbox/kpi#searching)
-    > Query searches within `uid` by default if no field is provided in `q`.
-
-    >       curl -X GET https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/exports/?q=zVEkrWg5Gd
-
-    Otherwise, the search can be more specific:
-
-    > Examples:
-    > **Exports matching `uid`s**
-    >
-    >      curl -X GET https://[kpi]/api/v2/assets/<code>{asset_uid}</code>/exports/?q=uid__in:ehZUwRctkhp9QfJgvEWGg OR uid__in:ehZUwRctkhp9QfJgvDnjud
+    ViewSet for managing the current user's exports
 
 
-    ## CRUD
+     Available actions:
+     - list           → GET /api/v2/assets/{uid_asset}/exports/
+     - create         → POST /api/v2/assets/{uid_asset}/exports/
+     - retrieve       → GET /api/v2/assets/{uid_asset}/exports/{uid_export}/
+     - delete         → DELETE /api/v2/assets/{uid_asset}/exports/{uid_export}/
 
-    > `uid` - is the unique identifier of a specific export task
-
-
-    ### Creates an export task
-
-    <pre class="prettyprint">
-    <b>POST</b> /api/v2/assets/<code>{asset_uid}</code>/exports/
-    </pre>
-
-    > Example
-    >
-    >       curl -X POST https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/exports/
-
-    > **Payload**
-    >
-    >        {
-    >           "fields_from_all_versions": "true",
-    >           "group_sep": "/",
-    >           "hierarchy_in_labels": "true",
-    >           "lang": "English (en)",
-    >           "multiple_select": "both",
-    >           "type": "geojson",
-    >           "fields": ["field_1", "field_2"],
-    >           "flatten": "true"
-    >           "xls_types_as_text": "false",
-    >           "include_media_url": "false",
-    >           "submission_ids": [1, 2, 3, 4],
-    >           "query": {
-    >              "$and": [
-    >                  {"_submission_time": {"$gte": "2021-08-31"}},
-    >                  {"_submission_time": {"$lte": "2021-10-13"}}
-    >              ]
-    >            }
-    >          }
-    >        }
-
-    where:
-
-    * "fields_from_all_versions" (required) is a boolean to specify whether fields from all form versions will be included in the export.
-    * "group_sep" (required) is a value used to separate the names in a hierarchy of groups. Valid inputs include:
-        * Non-empty value
-    * "hierarchy_in_labels" (required) is a boolean to specify whether the group hierarchy will be displayed in labels
-    * "lang" (required) is a string that can be set to:
-        * "_xml" to have XML values and headers, or
-        * Any translation specified in the form such as "English (en)", etc.
-    * "multiple_select" (required) is a value to specify the display of `multiple_select`-type responses. Valid inputs include:
-        * "both",
-        * "summary", or
-        * "details"
-    * "type" (required) specifies the export format. Valid export formats include:
-        * "csv",
-        * "geojson",
-        * "spss_labels", or
-        * "xls"
-    * "fields" (optional) is an array of column names to be included in the export (including their group hierarchy). Valid inputs include:
-        * An array containing any string value that matches the XML column name
-        * An empty array which will result in all columns being included
-        * If "fields" is not included in the "export_settings", all columns will be included in the export
-    * "flatten" (optional) is a boolean value and only relevant when exporting to "geojson" format.
-    * "xls_types_as_text" (optional) is a boolean value that defaults to "false" and only affects "xls" export types.
-    * "include_media_url" (optional) is a boolean value that defaults to "false" and only affects "xls" and "csv" export types. This will include an additional column for media-type questions ("question_name_URL") with the URL link to the hosted file.
-    * "submission_ids" (optional) is an array of submission ids that will filter exported submissions to only the specified array of ids. Valid inputs include:
-        * An array containing integer values
-        * An empty array (no filtering)
-    * "query" (optional) is a JSON object containing a Mongo filter query for filtering exported submissions. Valid inputs include:
-        * A JSON object containing a valid Mongo query
-        * An empty JSON object (no filtering)
-
-
-    ### Retrieves current export task
-
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/assets/<code>{asset_uid}</code>/exports/<code>{uid}</code>/
-    </pre>
-
-    > Example
-    >
-    >       curl -X GET https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/exports/ehZUwRctkop9QfJgvDmkdh/
-
-
-    ### Deletes current export task
-
-    <pre class="prettyprint">
-    <b>DELETE</b> /api/v2/assets/<code>{asset_uid}</code>/exports/<code>{uid}</code>/
-    </pre>
-
-    > Example
-    >
-    >       curl -X DELETE https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/exports/ehZUwRctkop9QfJgvDmkdh/
-
-
-    ### CURRENT ENDPOINT
+     Documentation:
+     - docs/api/v2/export_tasks/list.md
+     - docs/api/v2/export_tasks/create.md
+     - docs/api/v2/export_tasks/retrieve.md
+     - docs/api/v2/export_tasks/delete.md
     """
 
-    model = ExportTask
+    model = SubmissionExportTask
     serializer_class = ExportTaskSerializer
     lookup_field = 'uid'
-    renderer_classes = [
-        renderers.BrowsableAPIRenderer,
-        renderers.JSONRenderer,
-    ]
+    lookup_url_kwarg = 'uid_export'
+
     filter_backends = [
         filters.OrderingFilter,
         SearchFilter,
@@ -159,11 +135,63 @@ class ExportTaskViewSet(
     search_default_field_lookups = [
         'uid__icontains',
     ]
+    log_type = AuditType.PROJECT_HISTORY
+    logged_fields = [('object_id', 'asset.id'), 'asset.owner.username']
 
     def get_queryset(self):
         user = get_database_user(self.request.user)
         return self.model.objects.filter(
             user=user,
-            data__source__icontains=self.kwargs['parent_lookup_asset'],
+            data__source__icontains=self.kwargs['uid_asset'],
         )
 
+    def create(self, request, *args, **kwargs):
+        user = get_database_user(request.user)
+        if not is_user_anonymous(user):
+            return super().create(request, *args, **kwargs)
+        # only allow one anonymous export task to run at a time
+        source = reverse(
+            'asset-detail', kwargs={'uid_asset': self.asset.uid}, request=request
+        )
+        SubmissionExportTask.log_and_mark_stuck_as_errored(user, source)
+        # to be super sure we don't get stuck on a hanging task, use the same logic as
+        # log_and_mark_stuck_as_errored to determine a cutoff date for the oldest
+        # running export
+        max_export_run_time = getattr(settings, 'CELERY_TASK_TIME_LIMIT', 2100)
+        max_allowed_export_age = datetime.timedelta(seconds=max_export_run_time * 4)
+        this_moment = timezone.now()
+        oldest_allowed_timestamp = this_moment - max_allowed_export_age
+        existing_tasks = (
+            SubmissionExportTask.objects.filter(
+                data__source=source,
+                user=user,
+                date_created__gt=oldest_allowed_timestamp
+            )
+            .exclude(
+                status__in=(
+                    ImportExportStatusChoices.COMPLETE,
+                    ImportExportStatusChoices.ERROR,
+                )
+            )
+            .order_by('-date_created')
+        )
+        if existing_tasks.exists():
+            # take the most recent if there are multiples
+            existing_task = existing_tasks.first()
+            expected_latest_finish = existing_task.date_created + datetime.timedelta(
+                seconds=settings.CELERY_TASK_TIME_LIMIT
+            )
+
+            retry_after = max(
+                5,
+                int((expected_latest_finish - timezone.now()).total_seconds()),
+            )
+            return Response(
+                data={
+                    'error': f'Another export is already in progress. Please retry in'
+                    f' {retry_after} seconds'
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                headers={'Retry-After': retry_after}
+            )
+        return super().create(request, *args, **kwargs)

@@ -6,17 +6,16 @@ from django.conf import settings
 from rest_framework.reverse import reverse
 
 from kpi.constants import (
+    API_NAMESPACES,
     PERM_PARTIAL_SUBMISSIONS,
     PERM_VIEW_SUBMISSIONS,
 )
 from kpi.exceptions import PairedDataException
 from kpi.fields import KpiUidField
-from kpi.interfaces import (
-    OpenRosaManifestInterface,
-    SyncBackendMediaInterface,
-)
+from kpi.interfaces import OpenRosaManifestInterface, SyncBackendMediaInterface
 from kpi.models.asset_file import AssetFile
 from kpi.utils.hash import calculate_hash
+from kpi.utils.urls import versioned_reverse
 
 
 # FIXME: simplify this by making PairedData a real Django Model ^_^
@@ -72,26 +71,40 @@ class PairedData(OpenRosaManifestInterface,
         return f'<PairedData {self.paired_data_uid} ({self.filename})>'
 
     @property
-    def allowed_fields(self):
+    def allowed_fields(self) -> list | None:
         """
-        Return only the fields (aka questions) that the destination project is
-        allowed to pull data from.
+        Return the fields the destination project is allowed to pull from the
+        source.
+
+        Return value semantics:
+        - `None`  — no restriction from either side; keep all fields.
+        - non-empty list — keep only the listed fields.
+        - empty list — the source and destination field restrictions
+          have no overlap; **no data should be exposed**.
+
+        Callers must treat `None` as "no restriction" and `[]` as
+        "nothing allowed", which are two distinct states.
         """
+
         source_asset = self.get_source()
         if not source_asset:
             raise PairedDataException('No source asset found.')
 
         source_fields = source_asset.data_sharing['fields']
+
         if not source_fields:
-            return self.fields
+            # Source places no restriction: apply only the destination filter.
+            # Return None when neither side restricts (keep all).
+            return self.fields if self.fields else None
 
         if not self.fields:
+            # Destination places no restriction: apply only the source filter.
             return source_fields
 
-        source_set = set(source_fields)
-        self_set = set(self.fields)
-
-        return list(self_set.intersection(source_set))
+        # Both sides specify fields: return the intersection.
+        # An empty intersection means the two restrictions are incompatible and
+        # no fields should be shared — return [] to signal "nothing allowed".
+        return list(set(self.fields).intersection(source_fields))
 
     @property
     def asset_file(self):
@@ -114,8 +127,8 @@ class PairedData(OpenRosaManifestInterface,
         paired_data_url = reverse(
             f'{URL_NAMESPACE}:paired-data-external',
             kwargs={
-                'parent_lookup_asset': self.asset.uid,
-                'paired_data_uid': self.paired_data_uid,
+                'uid_asset': self.asset.uid,
+                'uid_paired_data': self.paired_data_uid,
                 'format': 'xml'
             },
         )
@@ -153,9 +166,17 @@ class PairedData(OpenRosaManifestInterface,
         """
         Implements `OpenRosaManifestInterface.get_download_url()`
         """
-        return reverse('paired-data-external',
-                       args=(self.asset.uid, self.paired_data_uid, 'xml'),
-                       request=request)
+
+        return versioned_reverse(
+            'paired-data-external',
+            args=(self.asset.uid, self.paired_data_uid, 'xml'),
+            request=request,
+            url_namespace=API_NAMESPACES['default'],
+        )
+
+    @property
+    def source(self):
+        return self.get_source()
 
     def get_source(self, force: bool = False) -> Union['Asset', None]:
         # if `self._source_asset` has been already set once, use the cache
@@ -210,8 +231,6 @@ class PairedData(OpenRosaManifestInterface,
             return calculate_hash(
                 f'{str(time.time())}.{self.backend_media_id}', prefix=True
             ) + '-time'
-
-        return self.asset_file.md5_hash
 
     @property
     def is_remote_url(self):

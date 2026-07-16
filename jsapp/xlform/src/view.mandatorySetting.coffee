@@ -165,4 +165,4 @@ module.exports = do ->
       $errorIcon = @rowView.cardSettingsWrap.find('.js-required-logic-error')
       $errorIcon.toggle(not hasExpression)
 
-  MandatorySettingView: MandatorySettingView
+  return MandatorySettingView: MandatorySettingView

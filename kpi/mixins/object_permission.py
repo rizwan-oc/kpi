@@ -1,4 +1,3 @@
-# coding: utf-8
 from __future__ import annotations
 
 import copy
@@ -6,30 +5,32 @@ from collections import defaultdict
 from typing import Optional
 
 from django.conf import settings
-from django.contrib.auth.models import User, AnonymousUser, Permission
+from django.contrib.auth.models import AnonymousUser, Permission
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.postgres.aggregates import ArrayAgg
 from django.db import models, transaction
+from django.db.models import Q
 from django_request_cache import cache_for_request
 from rest_framework import serializers
 
-
+from kobo.apps.kobo_auth.shortcuts import User
 from kobo.apps.project_views.models.project_view import ProjectView
 from kpi.constants import (
-    ASSET_TYPES_WITH_CHILDREN,
     ASSET_TYPE_SURVEY,
-    PERM_FROM_KC_ONLY,
+    ASSET_TYPES_WITH_CHILDREN,
+    PERM_DISCOVER_ASSET,
+    PERM_VIEW_ASSET,
     PREFIX_PARTIAL_PERMS,
 )
 from kpi.deployment_backends.kc_access.utils import (
-    remove_applicable_kc_permissions,
-    assign_applicable_kc_permissions,
     kc_transaction_atomic,
+    set_kc_anonymous_permissions_xform_flags,
 )
 from kpi.models.object_permission import ObjectPermission
 from kpi.utils.object_permission import (
     get_database_user,
     perm_parse,
+    post_assign_perm,
+    post_remove_perm,
 )
 from kpi.utils.permissions import is_user_anonymous
 from kpi.utils.project_views import (
@@ -100,34 +101,6 @@ class ObjectPermissionMixin:
         if type(source_object) is type(self):
             # First delete all permissions of the target asset (except owner's).
             perm_queryset = self.permissions.exclude(user_id=self.owner_id)
-            # The bulk delete below (i.e.: `perm_queryset.delete()`) does not
-            # remove permissions in KoBoCAT.
-            # We could loop through `self.permissions` and call `remove_perm`
-            # for each permission but it would have probably a performance hit
-            # with assets with lots of permissions.
-            # Let's use PostgreSQL specific function `ArrayAgg` to retrieve all
-            # codenames at once.
-
-            # It relies on the fact that permissions are synced in KoBoCAT and KPI.
-            # If any permissions are present in KoBoCAT but not in KPI, these
-            # permissions will not be deleted and will have to be deleted manually
-            # with KoBoCAT.
-
-            user_codenames = (
-                ObjectPermission.objects.filter(asset_id=self.pk, deny=False)
-                .exclude(user_id=self.owner_id)
-                .values('user_id')
-                .annotate(
-                    all_codenames=ArrayAgg(
-                        'permission__codename', distinct=True
-                    )
-                )
-            )
-            for user_codename in user_codenames:
-                remove_applicable_kc_permissions(
-                    self, user_codename['user_id'], user_codename['all_codenames']
-                )
-
             # Remove all permissions from the asset (except the owner's)
             perm_queryset.delete()
 
@@ -139,7 +112,8 @@ class ObjectPermissionMixin:
                     kwargs = {
                         'user_obj': source_permission.user,
                         'perm': source_permission.permission.codename,
-                        'deny': source_permission.deny
+                        'deny': source_permission.deny,
+                        'defer_recalc': True,
                     }
                     if source_permission.permission.codename.startswith(PREFIX_PARTIAL_PERMS):
                         kwargs.update({
@@ -148,6 +122,7 @@ class ObjectPermissionMixin:
                         })
                     self.assign_perm(**kwargs)
             self._recalculate_inherited_perms()
+            self.recalculate_descendants_perms()
             return True
         else:
             return False
@@ -257,14 +232,8 @@ class ObjectPermissionMixin:
             return
         effective_perms = self._get_effective_perms(include_calculated=False)
         for child in children:
-            # remove stale inherited perms
-            child.permissions.filter(inherited=True).delete()
             # calc the new ones
-            child._recalculate_inherited_perms(
-                parent_effective_perms=effective_perms,
-                stale_already_deleted=True,
-                #return_instead_of_creating=True
-            )
+            child._recalculate_inherited_perms(parent_effective_perms=effective_perms)
             # recurse!
             child.recalculate_descendants_perms()
 
@@ -281,13 +250,9 @@ class ObjectPermissionMixin:
         also made explicit as "inherited" permissions.
         """
         # Start with a clean slate
-        if not stale_already_deleted:
-            self.permissions.filter(inherited=True).delete()
         content_type = ContentType.objects.get_for_model(self)
-        if return_instead_of_creating:
-            # Conditionally create this so that Python will raise an exception
-            # if we use it when we're not supposed to
-            objects_to_return = []
+
+        objects_to_return = []
         # The owner gets every assignable permission
         if self.owner_id is not None:
             for perm in Permission.objects.filter(
@@ -305,10 +270,8 @@ class ObjectPermissionMixin:
                 new_permission.inherited = True
                 new_permission.uid = new_permission._meta.get_field(
                     'uid').generate_uid()
-                if return_instead_of_creating:
-                    objects_to_return.append(new_permission)
-                else:
-                    new_permission.save()
+                objects_to_return.append(new_permission)
+
         # Is there anything to inherit?
         if self.parent is not None:
             # Get our parent's effective permissions from the database if they
@@ -349,12 +312,21 @@ class ObjectPermissionMixin:
                 new_permission.inherited = True
                 new_permission.uid = new_permission._meta.get_field(
                     'uid').generate_uid()
-                if return_instead_of_creating:
-                    objects_to_return.append(new_permission)
-                else:
-                    new_permission.save()
+                objects_to_return.append(new_permission)
         if return_instead_of_creating:
+            if not stale_already_deleted:
+                self.permissions.filter(inherited=True).delete()
             return objects_to_return
+        else:
+            existing_objs = self.permissions.filter(inherited=True)
+            for perm in objects_to_return:
+                existing_objs = existing_objs.exclude(
+                    permission_id=perm.permission_id, user_id=perm.user_id
+                )
+            existing_objs.delete()
+            ObjectPermission.objects.bulk_create(
+                objects_to_return, ignore_conflicts=True
+            )
 
     @classmethod
     def get_implied_perms(
@@ -440,22 +412,29 @@ class ObjectPermissionMixin:
 
     @transaction.atomic
     @kc_transaction_atomic
-    def assign_perm(self, user_obj, perm, deny=False, defer_recalc=False,
-                    skip_kc=False, partial_perms=None):
+    def assign_perm(
+        self,
+        user_obj,
+        perm,
+        deny=False,
+        defer_recalc=False,
+        partial_perms=None,
+        _implied=False,
+    ):
         r"""
-            Assign `user_obj` the given `perm` on this object, or break
-            inheritance from a parent object. By default, recalculate
-            descendant objects' permissions and apply any applicable KC
-            permissions.
-            :type user_obj: :py:class:`User` or :py:class:`AnonymousUser`
-            :param perm: str. The `codename` of the `Permission`
-            :param deny: bool. When `True`, break inheritance from parent object
-            :param defer_recalc: bool. When `True`, skip recalculating
-                descendants
-            :param skip_kc: bool. When `True`, skip assignment of applicable KC
-                permissions
-            :param partial_perms: dict. Filters used to narrow down query for
-              partial permissions
+        Assign `user_obj` the given `perm` on this object, or break
+        inheritance from a parent object. By default, recalculate
+        descendant objects' permissions and apply any applicable KC
+        permissions.
+        :type user_obj: :py:class:`User` or :py:class:`AnonymousUser`
+        :param perm: str. The `codename` of the `Permission`
+        :param deny: bool. When `True`, break inheritance from parent object
+        :param defer_recalc: bool. When `True`, skip recalculating
+            descendants but still update partial permissions
+        :param partial_perms: dict. Filters used to narrow down query for
+          partial permissions
+        :param _implied: bool. Internal flag used for recursive implied-perm
+            calls. Skips partial-permission update and descendant recalculation.
         """
         app_label, codename = perm_parse(perm, self)
         assignable_permissions = self.get_assignable_permissions()
@@ -476,10 +455,7 @@ class ObjectPermissionMixin:
                 raise serializers.ValidationError({
                     'permission': f'Anonymous users cannot be granted the permission {codename}.'
                 })
-        perm_model = Permission.objects.get(
-            content_type__app_label=app_label,
-            codename=codename
-        )
+        perm_model = self._get_permission_model(app_label, codename)
         existing_perms = self.permissions.filter(user=user_obj)
         identical_existing_perm = existing_perms.filter(
             inherited=False,
@@ -507,14 +483,8 @@ class ObjectPermissionMixin:
                 permission__codename__in=self.CONTRADICTORY_PERMISSIONS.get(perm),
             )
         contradictory_perms = existing_perms.filter(contradictory_filters)
-        contradictory_codenames = list(contradictory_perms.values_list(
-            'permission__codename', flat=True))
-
         contradictory_perms.delete()
-        # Check if any KC permissions should be removed as well
-        if deny and not skip_kc:
-            remove_applicable_kc_permissions(
-                self, user_obj, contradictory_codenames)
+
         # Create the new permission
         new_permission = ObjectPermission.objects.create(
             asset=self,
@@ -523,43 +493,73 @@ class ObjectPermissionMixin:
             deny=deny,
             inherited=False
         )
-        # Assign any applicable KC permissions
-        if not deny and not skip_kc:
-            assign_applicable_kc_permissions(self, user_obj, codename)
+        post_assign_perm.send(
+            sender=self.__class__,
+            instance=self,
+            user=user_obj,
+            codename=codename,
+            deny=deny,
+        )
+
+        # Handle KoboCat xform flags for the anonymous user
+        if not deny and is_anonymous:
+            set_kc_anonymous_permissions_xform_flags(self, codename)
+
         # Resolve implied permissions, e.g. granting change implies granting
         # view
         implied_perms = self.get_implied_perms(
             codename, reverse=deny, for_instance=self
         ).intersection(assignable_permissions)
         for implied_perm in implied_perms:
-            self.assign_perm(
-                user_obj, implied_perm, deny=deny, defer_recalc=True)
-        # We might have been called by ourselves to assign a related
-        # permission. In that case, don't recalculate here.
-        if defer_recalc:
+            self.assign_perm(user_obj, implied_perm, deny=deny, _implied=True)
+        # Internal recursive call for an implied permission: skip partial and descendant
+        # perms, which are done at the top level.
+        if _implied:
             return new_permission
 
-        self._update_partial_permissions(user_obj, perm,
-                                         partial_perms=partial_perms)
+        self._update_partial_permissions(
+            user_obj, perm, partial_perms=partial_perms
+        )
 
-        # Recalculate all descendants
-        self.recalculate_descendants_perms()
+        # Recalculate all descendants (deferred by callers doing bulk ops)
+        if not defer_recalc:
+            self.recalculate_descendants_perms()
         return new_permission
 
-    def get_perms(self, user_obj: 'auth.User') -> list[str]:
+    @classmethod
+    def get_org_admin_inherited_perms(
+        cls, for_instance: Optional['kpi.models.Asset'] = None
+    ):
+        return set(
+            perm
+            for inherit_perm in settings.ADMIN_ORG_INHERITED_PERMS
+            for perm in [
+                inherit_perm,
+                *cls.get_implied_perms(inherit_perm, for_instance=for_instance),
+            ]
+        )
+
+    def get_perms(self, user_obj: settings.AUTH_USER_MODEL) -> list[str]:
         """
         Return a list of codenames of all effective grant permissions that
         user_obj has on this object.
         """
-        user_perm_ids = self._get_effective_perms(user=user_obj)
+        user = get_database_user(user_obj)
+        user_perm_ids = self._get_effective_perms(user=user)
         perm_ids = [x[1] for x in user_perm_ids]
-        assigned_perms = Permission.objects.filter(pk__in=perm_ids).values_list(
-            'codename', flat=True
+        assigned_perms = list(
+            Permission.objects.filter(pk__in=perm_ids).values_list(
+                'codename', flat=True
+            )
         )
-        project_views_perms = get_project_view_user_permissions_for_asset(
-            self, user_obj
-        )
-        return list(set(list(assigned_perms) + project_views_perms))
+        project_views_perms = get_project_view_user_permissions_for_asset(self, user)
+
+        other_perms = []
+        if self.owner and self.owner.organization.is_admin_only(user):
+            # Admins do not receive explicit permission assignments.
+            other_perms = list(self.get_org_admin_inherited_perms(self))
+
+        return list(set(assigned_perms + project_views_perms + other_perms))
 
     def get_partial_perms(self, user_id, with_filters=False):
         """
@@ -613,7 +613,17 @@ class ObjectPermissionMixin:
             user=user_obj,
             codename=codename
         )) == 1
+
         if not result and not is_anonymous:
+            org_admin_perms = self.get_org_admin_inherited_perms()
+
+            if (
+                self.owner
+                and self.owner.organization.is_admin_only(user_obj)
+                and codename in org_admin_perms
+            ):
+                return True
+
             if perm in ProjectView.ALLOWED_PERMISSIONS:
                 result = user_has_project_view_asset_perm(self, user_obj, perm)
 
@@ -640,24 +650,24 @@ class ObjectPermissionMixin:
 
     @transaction.atomic
     @kc_transaction_atomic
-    def remove_perm(self, user_obj, perm, defer_recalc=False, skip_kc=False):
+    def remove_perm(self, user_obj, perm, defer_recalc=False, _implied=False):
         """
-            Revoke the given `perm` on this object from `user_obj`. By default,
-            recalculate descendant objects' permissions and remove any
-            applicable KC permissions.  May delete granted permissions or add
-            deny permissions as appropriate:
-            Current access      Action
-            ==============      ======
-            None                None
-            Direct              Remove direct permission
-            Inherited           Add deny permission
-            Direct & Inherited  Remove direct permission; add deny permission
-            :type user_obj: :py:class:`User` or :py:class:`AnonymousUser`
-            :param perm str: The `codename` of the `Permission`
-            :param defer_recalc bool: When `True`, skip recalculating
-                descendants
-            :param skip_kc bool: When `True`, skip assignment of applicable KC
-                permissions
+        Revoke the given `perm` on this object from `user_obj`. By default,
+        recalculate descendant objects' permissions and remove any
+        applicable KC permissions.  May delete granted permissions or add
+        deny permissions as appropriate:
+        Current access      Action
+        ==============      ======
+        None                None
+        Direct              Remove direct permission
+        Inherited           Add deny permission
+        Direct & Inherited  Remove direct permission; add deny permission
+        :type user_obj: :py:class:`User` or :py:class:`AnonymousUser`
+        :param perm str: The `codename` of the `Permission`
+        :param defer_recalc bool: When `True`, skip recalculating
+            descendants but still update partial permissions
+        :param _implied: bool. Internal flag used for recursive implied-perm
+            calls. Skips partial-permission update and descendant recalculation.
         """
         user_obj = get_database_user(user_obj)
         app_label, codename = perm_parse(perm, self)
@@ -675,33 +685,58 @@ class ObjectPermissionMixin:
         )
         direct_permissions = all_permissions.filter(inherited=False)
         inherited_permissions = all_permissions.filter(inherited=True)
+        removed_perm_count = direct_permissions.count() + inherited_permissions.count()
         # Resolve implied permissions, e.g. revoking view implies revoking
         # change
         implied_perms = self.get_implied_perms(
             codename, reverse=True, for_instance=self
         )
         for implied_perm in implied_perms:
-            self.remove_perm(
-                user_obj, implied_perm, defer_recalc=True)
+            self.remove_perm(user_obj, implied_perm, _implied=True)
         # Delete directly assigned permissions, if any
         direct_permissions.delete()
+
         if inherited_permissions.exists():
             # Delete inherited permissions
             inherited_permissions.delete()
             # Add a deny permission to block future inheritance
             self.assign_perm(user_obj, perm, deny=True, defer_recalc=True)
-        # Remove any applicable KC permissions
-        if not skip_kc:
-            remove_applicable_kc_permissions(self, user_obj, codename)
 
-        # We might have been called by ourself to assign a related
-        # permission. In that case, don't recalculate here.
-        if defer_recalc:
+        if removed_perm_count > 0:
+            post_remove_perm.send(
+                sender=self.__class__,
+                instance=self,
+                user=user_obj,
+                codename=codename,
+            )
+
+        # Internal recursive call for an implied permission.
+        # No need to update partial or descendant perms, this is done at the top level
+        if _implied:
             return
 
         self._update_partial_permissions(user_obj, perm, remove=True)
-        # Recalculate all descendants
-        self.recalculate_descendants_perms()
+
+        # Recalculate all descendants (deferred by callers doing bulk ops)
+        if not defer_recalc:
+            self.recalculate_descendants_perms()
+
+        is_anonymous = is_user_anonymous(user_obj)
+        # Handle KoboCat xform flags for the anonymous user
+        if is_anonymous:
+            set_kc_anonymous_permissions_xform_flags(self, codename, remove=True)
+
+    @staticmethod
+    @cache_for_request
+    def _get_permission_model(app_label: str, codename: str) -> Permission:
+        """
+        Return the Permission object for the given app_label and codename.
+        Cached per request to avoid repeated DB hits during bulk assignments.
+        """
+        return Permission.objects.get(
+            content_type__app_label=app_label,
+            codename=codename,
+        )
 
     def _update_partial_permissions(
         self,
@@ -728,7 +763,7 @@ class ObjectPermissionMixin:
         are needed several times in a row (within the same request).
 
         It will hit the DB once for this object. If object permissions are needed
-        for an another user, in subsequent calls, they can be easily retrieved
+        for another user, in subsequent calls, they can be easily retrieved
         by the returned dict keys.
 
         Args:
@@ -748,12 +783,9 @@ class ObjectPermissionMixin:
                 ]
             }
         """
-        records = ObjectPermission.objects. \
-            filter(asset_id=object_id). \
-            values('user_id',
-                   'permission_id',
-                   'permission__codename',
-                   'deny')
+        records = ObjectPermission.objects.filter(asset_id=object_id).values(
+            'user_id', 'permission_id', 'permission__codename', 'deny'
+        )
         object_permissions_per_user = defaultdict(list)
         for record in records:
             object_permissions_per_user[record['user_id']].append((
@@ -766,11 +798,13 @@ class ObjectPermissionMixin:
 
     @staticmethod
     @cache_for_request
-    def __get_all_user_permissions(user_id):
+    def __get_all_user_permissions(user_id: int, asset_ids: list = None) -> dict:
         """
-        Retrieves all object permissions and builds an dict with object ids as keys.
+        Retrieves all object permissions and builds a dict with object ids as keys.
         Useful to retrieve permissions (thanks to `@cache_for_request`)
-        for several objects in a row without fetching data from data again & again
+        for several objects in a row without fetching data from data again & again.
+
+        Query can be restricted to a list of asset ids if they are passed.
 
         Because `django_cache_request` creates its keys based on method's arguments,
         it's important to minimize their number to hit the cache as much as possible.
@@ -798,7 +832,11 @@ class ObjectPermissionMixin:
                 ]
             }
         """
-        records = ObjectPermission.objects.filter(user=user_id).values(
+        filters = {'user': user_id}
+        if asset_ids:
+            filters['asset_id__in'] = asset_ids
+
+        records = ObjectPermission.objects.filter(**filters).values(
             'asset_id', 'permission_id', 'permission__codename', 'deny'
         )
         object_permissions_per_object = defaultdict(list)
@@ -843,16 +881,39 @@ class ObjectPermissionMixin:
         if user is not None:
             # Ensuring that the user has at least anonymous permissions if they
             # have been assigned to the asset
-            all_anon_object_permissions = self.__get_all_user_permissions(
-                user_id=settings.ANONYMOUS_USER_ID
-            )
-            perms = build_dict(
-                settings.ANONYMOUS_USER_ID,
-                all_anon_object_permissions.get(self.pk),
-            )
+
+            # To restrict the number of objects to retrieve with
+            # `__get_all_user_permissions()`, check if `self` has
+            # a cached property `asset_ids_cache` (usually set in AssetSerializer)
+            # which contains the list of asset ids fetched in this context.
+            asset_ids_cache = getattr(self, 'asset_ids_cache', [])
+            if asset_ids_cache:
+                all_anon_object_permissions = self.__get_all_user_permissions(
+                    user_id=settings.ANONYMOUS_USER_ID,
+                    asset_ids=asset_ids_cache,
+                )
+
+                perms = build_dict(
+                    settings.ANONYMOUS_USER_ID,
+                    all_anon_object_permissions.get(self.pk),
+                )
+            else:
+                # Otherwise, fetch only the permissions for this particular
+                # object.
+                all_object_permissions = self.__get_all_object_permissions(
+                    object_id=self.pk
+                )
+                all_anon_object_permissions = all_object_permissions.get(
+                    settings.ANONYMOUS_USER_ID, {}
+                )
+                perms = build_dict(
+                    settings.ANONYMOUS_USER_ID, all_anon_object_permissions
+                )
+
             if not is_user_anonymous(user):
                 all_object_permissions = self.__get_all_user_permissions(
-                    user_id=user.pk
+                    user_id=user.pk,
+                    asset_ids=asset_ids_cache
                 )
                 perms += build_dict(
                     user.pk, all_object_permissions.get(self.pk)
@@ -868,9 +929,9 @@ class ObjectPermissionMixin:
 
     @staticmethod
     @cache_for_request
-    def __get_permissions_for_content_type(content_type_id,
-                                           codename=None,
-                                           codename__startswith=None):
+    def __get_permissions_for_content_type(
+        content_type_id, codename=None, codename__startswith=None
+    ):
         """
         Gets permissions for specific content type and permission's codename
         This method is cached per request because it can be called several times
@@ -893,30 +954,46 @@ class ObjectPermissionMixin:
         if codename__startswith is not None:
             filters['codename__startswith'] = codename__startswith
 
-        permissions = Permission.objects.filter(**filters). \
-            values_list('pk', 'codename')
+        permissions = Permission.objects.filter(**filters).values_list('pk', 'codename')
 
         return permissions
 
 
 class ObjectPermissionViewSetMixin:
 
-    def cache_all_assets_perms(self, asset_ids: list) -> dict:
+    def cache_all_assets_perms(
+        self, asset_ids: list, current_user_permissions_only: bool = True
+    ) -> dict:
 
-        object_permissions = ObjectPermission.objects.filter(
+        user_id = self.request.user.pk
+
+        qs = ObjectPermission.objects.filter(
             asset_id__in=asset_ids,
             deny=False,
-        ).exclude(
-            permission__codename=PERM_FROM_KC_ONLY
-        ).select_related(
-            'user', 'permission'
-        ).order_by(
-            'user__username', 'permission__codename'
         )
+
+        if current_user_permissions_only:
+            # Load only the minimal set of permissions needed by the list view:
+            # - all permissions for the requesting user (for get_permissions())
+            # - discover_asset, view_asset for anonymous (for public detection)
+            qs = qs.filter(
+                Q(user_id=user_id)
+                | Q(
+                    user_id=settings.ANONYMOUS_USER_ID,
+                    permission__codename__in=[PERM_DISCOVER_ASSET, PERM_VIEW_ASSET],
+                )
+            )
 
         object_permissions_per_asset = defaultdict(list)
 
-        for op in object_permissions:
-            object_permissions_per_asset[op.asset_id].append(op)
+        for op in qs.values(
+            'uid',
+            'asset_id',
+            'user_id',
+            'deny',
+            'user__username',
+            'permission__codename',
+        ).order_by('user__username', 'permission__codename'):
+            object_permissions_per_asset[op['asset_id']].append(op)
 
         return object_permissions_per_asset

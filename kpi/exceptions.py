@@ -1,6 +1,8 @@
 # coding: utf-8
+from django.conf import settings
 from django.utils.translation import gettext_lazy as t
-from rest_framework import exceptions
+from rest_framework import exceptions, status
+from rest_framework.exceptions import APIException
 
 
 class AbstractMethodError(NotImplementedError):
@@ -27,6 +29,10 @@ class AttachmentNotFoundException(Exception):
     pass
 
 
+class AttachmentUidMismatchException(Exception):
+    pass
+
+
 class BadAssetTypeException(Exception):
     pass
 
@@ -40,6 +46,16 @@ class BadFormatException(Exception):
 
 
 class BadPermissionsException(Exception):
+    pass
+
+
+class BulkUpdateSubmissionsClientException(exceptions.ValidationError):
+    # This is message should be overridden with something more specific
+    default_detail = t('Invalid payload for bulk updating of submissions')
+    default_code = 'bulk_update_submissions_client_error'
+
+
+class ConcurrentExportException(Exception):
     pass
 
 
@@ -59,6 +75,28 @@ class DeploymentNotFound(Exception):
         super().__init__(message)
 
 
+class DTDForbiddenException(Exception):
+    """
+    Exception to be used when DTDs are forbidden while parsing XML using the
+    LXML library
+    """
+
+    def __init__(self, message=t('XML contains forbidden DTDs')):
+        self.message = message
+        super().__init__(self.message)
+
+
+class EntitiesForbiddenException(Exception):
+    """
+    Exception to be used when Entities are forbidden while parsing XML
+    using the LXML library
+    """
+
+    def __int__(self, message=t('XML contains forbidden entities')):
+        self.message = message
+        super().__init__(self.message)
+
+
 class FFMpegException(Exception):
     pass
 
@@ -67,14 +105,25 @@ class ImportAssetException(Exception):
     pass
 
 
+class InvalidPasswordAPIException(exceptions.APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = t(
+        'Your access is restricted. Please reclaim your access by '
+        'changing your password at '
+        '##koboform_url##/accounts/password/reset/.'
+    ).replace('##koboform_url##', settings.KOBOFORM_URL)
+    default_code = 'invalid_password'
+
+
 class InvalidSearchException(exceptions.APIException):
-    status_code = 400
+    status_code = status.HTTP_400_BAD_REQUEST
     default_detail = t('Invalid search. Please try again')
     default_code = 'invalid_search'
 
 
 class InvalidXFormException(Exception):
-    pass
+    def __init__(self, message=t('Deployment links to an unexpected KoboCAT XForm')):
+        super().__init__(message)
 
 
 class InvalidXPathException(Exception):
@@ -87,19 +136,6 @@ class KobocatCommunicationError(Exception):
         self, message='Could not communicate with KoBoCAT', *args, **kwargs
     ):
         super().__init__(message, *args, **kwargs)
-
-
-class KobocatBulkUpdateSubmissionsClientException(exceptions.ValidationError):
-    # This is message should be overridden with something more specific
-    default_detail = t('Invalid payload for bulk updating of submissions')
-    default_code = 'bulk_update_submissions_client_error'
-
-
-class KobocatBulkUpdateSubmissionsException(exceptions.APIException):
-    status_code = 500
-    default_detail = t(
-        'An error occurred trying to bulk update the submissions.')
-    default_code = 'bulk_update_submissions_error'
 
 
 class KobocatDeploymentException(exceptions.APIException):
@@ -121,7 +157,7 @@ class KobocatDeploymentException(exceptions.APIException):
 
 
 class KobocatDuplicateSubmissionException(exceptions.APIException):
-    status_code = 500
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     default_detail = t('An error occurred trying to duplicate the submission')
     default_code = 'submission_duplication_error'
 
@@ -130,12 +166,16 @@ class KobocatProfileException(Exception):
     pass
 
 
+class MissingXFormException(Exception):
+    pass
+
+
 class NotSupportedFormatException(Exception):
     pass
 
 
 class ObjectDeploymentDoesNotExist(exceptions.APIException):
-    status_code = 400
+    status_code = status.HTTP_400_BAD_REQUEST
     default_detail = t('The specified object has not been deployed')
     default_code = 'deployment_does_not_exist'
 
@@ -160,6 +200,18 @@ class ReadOnlyModelError(Exception):
         super().__init__(msg, *args, **kwargs)
 
 
+class RetryAfterAPIException(APIException):
+    default_code = 'retry_after'
+    default_detail = 'Please try again later.'
+    status_code = 429
+
+    def __init__(self, detail=None, retry_after=60):
+        if detail is None:
+            detail = self.default_detail
+        self.retry_after = retry_after
+        super().__init__(detail)
+
+
 class SearchQueryTooShortException(InvalidSearchException):
     default_detail = t('Your query is too short')
     default_code = 'query_too_short'
@@ -171,6 +223,12 @@ class SubmissionIntegrityError(Exception):
 
 class SubmissionNotFoundException(Exception):
     pass
+
+
+class UsageLimitExceededException(exceptions.APIException):
+    status_code = status.HTTP_402_PAYMENT_REQUIRED
+    default_detail = t('The owner of this asset has exeeded their usage limit')
+    default_code = 'usage_limit_exceeded'
 
 
 class XPathNotFoundException(Exception):

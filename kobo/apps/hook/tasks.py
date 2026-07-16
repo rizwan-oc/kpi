@@ -1,52 +1,45 @@
-# coding: utf-8
 import time
+from datetime import timedelta
 
-import constance
 from celery import shared_task
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives, get_connection
+from django.db.models import Q
 from django.template.loader import get_template
-from django.utils import translation, timezone
+from django.utils import timezone, translation
 from django_celery_beat.models import PeriodicTask
 
+from kobo.celery import celery_app
 from kpi.utils.log import logging
-from .constants import HOOK_LOG_FAILED
-from .models import Hook, HookLog
+from .constants import KOBO_INTERNAL_ERROR_STATUS_CODE
+from .exceptions import HookRemoteServerDownError
+from .models import Hook
+from .models.hook_log import HookLog, HookLogStatus
+from .utils.lazy import LazyMaxRetriesInt
 
 
-@shared_task(bind=True)
-def service_definition_task(self, hook_id, submission_id):
+@celery_app.task(
+    autoretry_for=(HookRemoteServerDownError,),
+    retry_backoff=60,
+    retry_backoff_max=1200,
+    max_retries=LazyMaxRetriesInt(),
+    queue='kpi_low_priority_queue',
+)
+def service_definition_task(hook_id: int, submission_id: int) -> bool:
     """
     Tries to send data to the endpoint of the hook
     It retries n times (n = `constance.config.HOOK_MAX_RETRIES`)
-
-    - after 1 minutes,
-    - after 10 minutes,
-    - after 100 minutes
-    etc ...
-
-    :param self: Celery.Task.
-    :param hook_id: int. Hook PK
-    :param submission_id: int. Instance PK
     """
     hook = Hook.objects.get(id=hook_id)
     # Use camelcase (even if it's not PEP-8 compliant)
     # because variable represents the class, not the instance.
-    ServiceDefinition = hook.get_service_definition()
+    ServiceDefinition = hook.get_service_definition()  # noqa
     service_definition = ServiceDefinition(hook, submission_id)
-    if not service_definition.send():
-        # Countdown is in seconds
-        countdown = HookLog.get_remaining_seconds(self.request.retries)
-        raise self.retry(countdown=countdown, max_retries=constance.config.HOOK_MAX_RETRIES)
-
-    return True
+    return service_definition.send()
 
 
 @shared_task
-def retry_all_task(hooklogs_ids):
-    """
-    :param list: <int>.
-    """
+def retry_all_task(hooklogs_ids: int):
     hook_logs = HookLog.objects.filter(id__in=hooklogs_ids)
     for hook_log in hook_logs:
         hook_log.retry()
@@ -61,32 +54,34 @@ def failures_reports():
     Notifies owners' assets by email of hooks failures.
     :return: bool
     """
-    beat_schedule = settings.CELERY_BEAT_SCHEDULE.get("send-hooks-failures-reports")
+    beat_schedule = settings.CELERY_BEAT_SCHEDULE.get('send-hooks-failures-reports')
     # Use `.first()` instead of `.get()`, because task can be duplicated in admin section
 
-    failures_reports_period_task = PeriodicTask.objects.filter(
-        enabled=True,
-        task=beat_schedule.get('task')).order_by("-last_run_at").first()
+    failures_reports_period_task = (
+        PeriodicTask.objects.filter(enabled=True, task=beat_schedule.get('task'))
+        .order_by('-last_run_at')
+        .first()
+    )
 
     if failures_reports_period_task:
 
         last_run_at = failures_reports_period_task.last_run_at
-        queryset = HookLog.objects.filter(hook__email_notification=True,
-                                          status=HOOK_LOG_FAILED)
+        queryset = HookLog.objects.filter(
+            hook__email_notification=True, status=HookLogStatus.FAILED
+        )
         if last_run_at:
             queryset = queryset.filter(date_modified__gte=last_run_at)
 
-        queryset = queryset.order_by('hook__asset__name',
-                                     'hook__uid',
-                                     '-date_modified')
+        queryset = queryset.order_by('hook__asset__name', 'hook__uid', '-date_modified')
 
         # PeriodicTask are updated every 3 minutes (default).
         # It means, if this task interval is less than 3 minutes, some data can be duplicated in emails.
         # Setting `beat-sync-every` to 1, makes PeriodicTask to be updated before running the task.
         # So, we need to update it manually.
         # see: http://docs.celeryproject.org/en/latest/userguide/configuration.html#beat-sync-every
-        PeriodicTask.objects.filter(task=beat_schedule.get("task")). \
-            update(last_run_at=timezone.now())
+        PeriodicTask.objects.filter(task=beat_schedule.get('task')).update(
+            last_run_at=timezone.now()
+        )
 
         records = {}
         max_length = 0
@@ -129,6 +124,8 @@ def failures_reports():
             max_length = max(max_length, hook_name_length)
             records[record.hook.asset.owner.id]['assets'][record.hook.asset.uid]['max_length'] = max_length
 
+        # TODO use kpi.utils.mailer.EmailMessage and kpi.utils.mailer.Mailer
+        #  classes to send emails
         # Get templates
         plain_text_template = get_template('reports/failures_email_body.txt')
         html_template = get_template('reports/failures_email_body.html')
@@ -141,13 +138,16 @@ def failures_reports():
                 'kpi_base_url': settings.KOBOFORM_URL
             }
             # Localize templates
-            translation.activate(record.get("language"))
+            translation.activate(record.get('language'))
             text_content = plain_text_template.render(variables)
             html_content = html_template.render(variables)
 
-            msg = EmailMultiAlternatives(translation.gettext('REST Services Failure Report'), text_content,
-                                         constance.config.SUPPORT_EMAIL,
-                                         [record.get('email')])
+            msg = EmailMultiAlternatives(
+                subject=translation.gettext('REST Services Failure Report'),
+                body=text_content,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[record.get('email')],
+            )
             msg.attach_alternative(html_content, 'text/html')
             email_messages.append(msg)
 
@@ -161,3 +161,89 @@ def failures_reports():
                 return False
 
     return True
+
+
+@shared_task
+def retry_stalled_pending_submissions():
+    """
+    Retries submissions that were never processed due to Celery task failures.
+
+    Finds HookLogs that are PENDING and match one of:
+    1. status_code = KOBO_INTERNAL_ERROR_STATUS_CODE (None)
+       AND message = '' (no error recorded)
+       AND date_modified > HOOK_STALLED_PENDING_TIMEOUT minutes ago
+    2. date_modified > HOOK_STALLED_RETRY_TIMEOUT minutes ago
+
+    These represent submissions where the Celery task was killed before it could
+    even start processing (e.g., pod restart during queuing).
+    """
+    stalled_pending_cutoff_time = timezone.now() - timedelta(
+        minutes=settings.HOOK_STALLED_PENDING_TIMEOUT
+    )
+    stalled_retry_cutoff_time = timezone.now() - timedelta(
+        minutes=settings.HOOK_STALLED_RETRY_TIMEOUT
+    )
+
+    stalled_logs = HookLog.objects.filter(
+        Q(
+            status=HookLogStatus.PENDING,
+            status_code=KOBO_INTERNAL_ERROR_STATUS_CODE,
+            message='',
+            date_modified__lt=stalled_pending_cutoff_time,
+        )
+        | Q(
+            status=HookLogStatus.PENDING,
+            status_code__isnull=False,
+            date_modified__lt=stalled_retry_cutoff_time,
+        ),
+        hook__active=True,
+    ).select_related('hook')
+
+    retried_count = 0
+    for log in stalled_logs:
+        # Re-queue the submission
+        service_definition_task.delay(log.hook_id, log.submission_id)
+        retried_count += 1
+
+    logging.info(f'Re-queued {retried_count} stalled submissions')
+
+
+@shared_task
+def mark_zombie_processing_submissions():
+    """
+    Marks as FAILED submissions that were being processed when the Celery task died.
+
+    Finds HookLogs that are:
+    - status = PROCESSING
+    - modified_at > HOOK_STALLED_PENDING_TIMEOUT minutes ago
+
+    These represent submissions where the task started but was killed before completion
+    (e.g., OOM, pod termination). The submission MAY have been sent to the remote
+    server but we couldn't record the response.
+    """
+
+    cutoff_time = timezone.now() - timedelta(
+        minutes=settings.HOOK_STALLED_PENDING_TIMEOUT
+    )
+
+    zombie_logs = HookLog.objects.filter(
+        status=HookLogStatus.PROCESSING,
+        date_modified__lt=cutoff_time,
+    ).select_related('hook')
+
+    marked_count = 0
+    for log in zombie_logs:
+
+        log.status = HookLogStatus.FAILED
+        log.status_code = KOBO_INTERNAL_ERROR_STATUS_CODE
+        log.message = (
+            'Submission processing was interrupted. The submission MAY have been '
+            'sent to the external endpoint, but the response could not be recorded. '
+            'Please verify manually on the remote server to avoid duplicate '
+            'submissions. Processing started but was terminated after 2+ hours without '
+            'completion (likely due to pod restart/OOM).'
+        )
+        log.save()
+        marked_count += 1
+
+    logging.info(f'Marked {marked_count} zombie submissions as failed')

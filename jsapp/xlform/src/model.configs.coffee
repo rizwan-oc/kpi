@@ -10,7 +10,7 @@ Details pulled from ODK documents / google docs. Notably this one:
 
 _ = require 'underscore'
 Backbone = require 'backbone'
-$utils = require './model.utils'
+txtid = require('#/utils').txtid
 
 module.exports = do ->
   configs = {}
@@ -24,6 +24,11 @@ module.exports = do ->
       name: "end"
       label: "end time"
       description: "records when the survey was marked as completed"
+      default: false
+    startgeo:
+      name: "start-geopoint"
+      label: "start geopoint early"
+      description: '"warms up" the GPS to make it quicker to get an accurate reading'
       default: false
     today:
       name: "today"
@@ -72,18 +77,21 @@ module.exports = do ->
   do ->
     class SurveyDetailSchemaItem extends Backbone.Model
       _forSurvey: ()->
-        name: @get("name")
-        label: @get("label")
-        description: @get("description")
-        default: @get("default")
-        deprecated: @get("deprecated")
+        return {
+          name: @get("name")
+          label: @get("label")
+          description: @get("description")
+          default: @get("default")
+          deprecated: @get("deprecated")
+        }
 
     class configs.SurveyDetailSchema extends Backbone.Collection
       model: SurveyDetailSchemaItem
       typeList: ()->
         unless @_typeList
           @_typeList = (item.get("name")  for item in @models)
-        @_typeList
+        return @_typeList
+    return
 
   configs.surveyDetailSchema = new configs.SurveyDetailSchema(_.values(configs.defaultSurveyDetails))
 
@@ -145,6 +153,16 @@ module.exports = do ->
     acknowledge:
       label:
         value: "Acknowledge"
+    select_one_from_file:
+      label:
+        value: "Select One from file"
+      file:
+        value: "DEFAULT_CHOICES_FILE"
+    select_multiple_from_file:
+      label:
+        value: "Select Multiple from file"
+      file:
+        value: "DEFAULT_CHOICES_FILE"
     'xml-external':
       label:
         value: "File_name"
@@ -154,7 +172,8 @@ module.exports = do ->
 
   configs.paramTypes = {
     number: 'number',
-    boolean: 'boolean'
+    boolean: 'boolean',
+    maxPixels: 'maxPixels',
   }
 
   configs.questionParams = {
@@ -192,6 +211,7 @@ module.exports = do ->
 
   configs.columns = [
     "name",
+    "file",
     "bind::oc:itemgroup",
     "bind::oc:briefdescription",
     'bind::oc:description',
@@ -241,7 +261,9 @@ module.exports = do ->
       ["rank__level", "Rank Level"],
       ["select_multiple", "Multiple choice", orOtherOption: true, specifyChoice: true],
       ["select_one_from_file", "Text"],
-      ["xml-external", "External XML"]
+      ["select_multiple_from_file", "Select multiple from file"],
+      ["xml-external", "External XML"],
+      ["background-geopoint", "Background geopoint", supportedByUI: false],
     ]
 
     class Type
@@ -254,20 +276,20 @@ module.exports = do ->
     exp = (typeId)->
       for tp in types when tp.name is typeId
         output = tp
-      output
+      return output
 
     exp.typeSelectList = do ->
-      () -> types
+      return () -> types
 
-    exp
+    return exp
 
   configs.autoset_kuid = true
 
   configs.columnOrder = do ->
-    (key)->
+    return (key)->
       if -1 is configs.columns.indexOf key
         configs.columns.push(key)
-      configs.columns.indexOf key
+      return configs.columns.indexOf key
 
   configs.newRowDetails =
     name:
@@ -321,7 +343,7 @@ module.exports = do ->
   configs.newGroupDetails =
     name:
       value: ->
-        "group_#{$utils.txtid()}"
+        return "group_#{txtid()}"
     label:
       value: ""
     type:
@@ -362,4 +384,4 @@ module.exports = do ->
   # Alternative: XLF.configs.boolOutputs = {"true": "yes", "false": "no"}
   configs.boolOutputs = {"true": "true", "false": "false"}
 
-  configs
+  return configs

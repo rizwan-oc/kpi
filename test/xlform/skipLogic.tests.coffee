@@ -428,6 +428,7 @@ do ->
         row = survey.rows.at(0)
         expect(row.get('relevant')).toBeDefined()
       window.xlfHideWarnings = false
+      return
 
     it 'relevant RowDetail serializes to empty string before linkUp', ->
       # Before linkUp, facade.context is not yet initialized

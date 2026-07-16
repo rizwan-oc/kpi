@@ -1,0 +1,63 @@
+@use 'scss/breakpoints';
+@use 'scss/colors';
+
+.root {
+  padding: 40px;
+}
+
+.headerText {
+  font-size: 18px;
+  font-weight: 700;
+  // TODO this should be a color from our palette
+  color: hsl(225deg 33% 59%);
+  text-transform: uppercase;
+}
+
+.article {
+  p {
+    display: inline;
+  }
+}
+
+.header {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.updated {
+  border-radius: 0.25em;
+  background-color: colors.$kobo-light-storm;
+  padding: 0.5em;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+  flex-flow: wrap;
+  gap: 24px;
+  flex: 1 1 0;
+  width: 100%;
+}
+
+.usageType {
+  display: flex;
+  align-items: center;
+}
+
+.title {
+  font-size: 16px;
+  color: colors.$kobo-gray-700;
+}
+
+.date {
+  display: block;
+  font-size: 14px;
+}
+
+@include breakpoints.breakpoint(veryWide) {
+  .row {
+    flex-wrap: nowrap;
+  }
+}

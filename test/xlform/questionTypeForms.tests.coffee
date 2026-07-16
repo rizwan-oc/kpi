@@ -38,40 +38,42 @@ do ->
   describe 'questionTypeForms: appearance.getTypes() — per question type', ->
 
     describe 'text', ->
-      it 'returns ["multiline"] for text', ->
+      it 'text uses card grid path (isCardGridType is true)', ->
+        ctx = buildAppearanceMixinCtx('text')
+        expect(ctx.isCardGridType()).toBe(true)
+
+      it 'text getTypes() returns undefined (card grid path)', ->
         ctx = buildAppearanceMixinCtx('text')
         types = ctx.getTypes()
-        expect(Array.isArray(types)).toBe(true)
-        expect(types.indexOf('multiline')).not.toBe(-1)
+        expect(types).toBeUndefined()
 
     describe 'select_one', ->
-      it 'returns appearance options for select_one', ->
+      it 'select_one uses card grid path (isCardGridType is true)', ->
+        ctx = buildAppearanceMixinCtx('select_one')
+        expect(ctx.isCardGridType()).toBe(true)
+
+      it 'select_one getTypes() returns undefined (card grid path)', ->
         ctx = buildAppearanceMixinCtx('select_one')
         types = ctx.getTypes()
-        expect(Array.isArray(types)).toBe(true)
-        expect(types.indexOf('minimal')).not.toBe(-1)
-        expect(types.indexOf('columns')).not.toBe(-1)
-        expect(types.indexOf('likert')).not.toBe(-1)
-
-      it 'includes "image-map" for select_one', ->
-        ctx = buildAppearanceMixinCtx('select_one')
-        expect(ctx.getTypes().indexOf('image-map')).not.toBe(-1)
-
-      it 'select_one has at least 5 appearance options', ->
-        ctx = buildAppearanceMixinCtx('select_one')
-        expect(ctx.getTypes().length >= 5).toBe(true)
+        expect(types).toBeUndefined()
 
     describe 'select_multiple', ->
-      it 'returns appearance options for select_multiple', ->
+      it 'select_multiple uses card grid path (isCardGridType is true)', ->
+        ctx = buildAppearanceMixinCtx('select_multiple')
+        expect(ctx.isCardGridType()).toBe(true)
+
+      it 'select_multiple getTypes() returns undefined (card grid path)', ->
         ctx = buildAppearanceMixinCtx('select_multiple')
         types = ctx.getTypes()
-        expect(Array.isArray(types)).toBe(true)
-        expect(types.indexOf('minimal')).not.toBe(-1)
-        expect(types.indexOf('columns')).not.toBe(-1)
+        expect(types).toBeUndefined()
 
-      it 'includes "image-map" for select_multiple', ->
-        ctx = buildAppearanceMixinCtx('select_multiple')
-        expect(ctx.getTypes().indexOf('image-map')).not.toBe(-1)
+      it 'select_multiple — image does not use card grid', ->
+        ctx = buildAppearanceMixinCtx('image')
+        expect(ctx.isCardGridType()).toBe(false)
+
+      it 'select_multiple — integer does not use card grid', ->
+        ctx = buildAppearanceMixinCtx('integer')
+        expect(ctx.isCardGridType()).toBe(false)
 
     describe 'image', ->
       it 'returns appearance options for image', ->
@@ -97,7 +99,7 @@ do ->
         expect(types).toBeUndefined()
 
     describe 'types with no specific appearance options', ->
-      noAppTypes = ['decimal', 'note', 'file', 'audio', 'video']
+      noAppTypes = ['decimal', 'audio', 'video']
       for qtype in noAppTypes
         do (qtype) ->
           it "#{qtype} getTypes() returns undefined (textbox fallback)", ->
@@ -115,23 +117,20 @@ do ->
   ###############################################################
   describe 'questionTypeForms: appearance.html() — uses dropdown where options exist', ->
 
-    it 'text html() renders a dropdown with at least "select" + "multiline"', ->
+    it 'text html() returns empty string (card grid path, no legacy dropdown)', ->
       ctx = buildAppearanceMixinCtx('text')
       result = ctx.html()
-      expect(result.indexOf('<select')).not.toBe(-1)
-      expect(result.indexOf('multiline')).not.toBe(-1)
+      expect(result).toBe('')
 
-    it 'select_one html() renders a dropdown', ->
+    it 'select_one html() returns empty string (card grid rendered in afterRender)', ->
       ctx = buildAppearanceMixinCtx('select_one')
       result = ctx.html()
-      expect(result.indexOf('<select')).not.toBe(-1)
-      expect(result.indexOf('minimal')).not.toBe(-1)
+      expect(result).toBe('')
 
-    it 'select_multiple html() renders a dropdown', ->
+    it 'select_multiple html() returns empty string (card grid rendered in afterRender)', ->
       ctx = buildAppearanceMixinCtx('select_multiple')
       result = ctx.html()
-      expect(result.indexOf('<select')).not.toBe(-1)
-      expect(result.indexOf('columns')).not.toBe(-1)
+      expect(result).toBe('')
 
     it 'image html() renders a dropdown with draw, annotate, signature', ->
       ctx = buildAppearanceMixinCtx('image')
@@ -140,11 +139,20 @@ do ->
       expect(result.indexOf('draw')).not.toBe(-1)
       expect(result.indexOf('signature')).not.toBe(-1)
 
-    it 'date html() renders a dropdown with month-year, year', ->
+    it 'date html() returns empty string (card grid path, no legacy dropdown)', ->
       ctx = buildAppearanceMixinCtx('date')
       result = ctx.html()
-      expect(result.indexOf('<select')).not.toBe(-1)
-      expect(result.indexOf('month-year')).not.toBe(-1)
+      expect(result).toBe('')
+
+    it 'note html() returns empty string (card grid path, no legacy textbox)', ->
+      ctx = buildAppearanceMixinCtx('note')
+      result = ctx.html()
+      expect(result).toBe('')
+
+    it 'file html() returns empty string (card grid path, no legacy textbox)', ->
+      ctx = buildAppearanceMixinCtx('file')
+      result = ctx.html()
+      expect(result).toBe('')
 
     it 'integer html() returns null (card grid rendered by view.row.coffee)', ->
       ctx = buildAppearanceMixinCtx('integer')
@@ -270,6 +278,7 @@ do ->
       expect(opts[1].text).toBe('No Trigger')
       expect(opts[2].value).toBe('${prev_q}')
       window.xlfHideWarnings = false
+      return
 
   ###############################################################
   # Per-type: note — required is prevented
@@ -346,6 +355,9 @@ do ->
             do (fieldKey) ->
               it "has '#{fieldKey}' RowDetail", ->
                 expect(@row.get(fieldKey)).toBeDefined()
+          return
+
+    return
 
   ###############################################################
   # Per-type: use_external_value (oc_external) — type-gating

@@ -1,32 +1,36 @@
 # coding: utf-8
 import re
 
-from django.contrib.auth.models import User
 from django.urls import reverse
 from rest_framework import status
+from rest_framework.exceptions import ParseError
 
+from kobo.apps.form_disclaimer.models import FormDisclaimer
+from kobo.apps.kobo_auth.shortcuts import User
+from kobo.apps.languages.models.language import Language
+from kpi.constants import PERM_VIEW_ASSET
 from kpi.models.asset import AssetSnapshot
 from kpi.tests.kpi_test_case import KpiTestCase
 from kpi.urls.router_api_v2 import URL_NAMESPACE as ROUTER_URL_NAMESPACE
+from kpi.utils.object_permission import get_anonymous_user
 from kpi.utils.strings import to_str
 
 
-class TestAssetSnapshotList(KpiTestCase):
+class AssetSnapshotBase(KpiTestCase):
+
     fixtures = ['test_data']
-
     URL_NAMESPACE = ROUTER_URL_NAMESPACE
-
     form_source = """
-                    {
-                        "survey": [
-                            {"type":"text","label":"Text+Question.","required":"true"},
-                            {"name":"start","type":"start"},
-                            {"name":"end","type":"end"}],
-                        "settings": [
-                            {"form_title":"New+form",
-                            "form_id":"new_form"}]
-                    }
-                 """
+        {
+            "survey": [
+                {"type":"text","label":"Text+Question.","required":"true"},
+                {"name":"start","type":"start"},
+                {"name":"end","type":"end"}],
+            "settings": [
+                {"form_title":"New+form",
+                "form_id":"new_form"}]
+        }
+     """
 
     def _create_asset_snapshot_from_source(self):
         self.client.login(username='someuser', password='someuser')
@@ -40,6 +44,9 @@ class TestAssetSnapshotList(KpiTestCase):
         self.assertTrue(len(xml_resp.content) > 0)
         self.client.logout()
         return response
+
+
+class TestAssetSnapshotList(AssetSnapshotBase):
 
     def test_create_asset_snapshot_from_source(self):
         self._create_asset_snapshot_from_source()
@@ -154,15 +161,18 @@ class TestAssetSnapshotList(KpiTestCase):
         with 204 status codes and the appropriate headers set
         """
         VIEW_NAMES_TO_TEST = [
-            'assetsnapshot-form-list',
-            'assetsnapshot-manifest',
-            'assetsnapshot-submission',
+            'assetsnapshot-form-list-openrosa',
+            'assetsnapshot-manifest-openrosa',
+            'assetsnapshot-submission-openrosa',
         ]
         creation_response = self._create_asset_snapshot_from_asset()
         snapshot_uid = creation_response.data['uid']
         self.client.login(username='someuser', password='someuser')
         for view_name in VIEW_NAMES_TO_TEST:
-            url = reverse(self._get_endpoint(view_name), args=(snapshot_uid,))
+            url = reverse(
+                self._get_endpoint(view_name),
+                kwargs={'uid_asset_snapshot': snapshot_uid},
+            )
             response = self.client.head(url)
             assert response.status_code == status.HTTP_204_NO_CONTENT
             assert not response.data
@@ -201,3 +211,251 @@ class TestAssetSnapshotList(KpiTestCase):
             self.assertTrue(
                 kludgy_is_xml_equal(xml_response.content, snapshot_orm_xml)
             )
+
+    def test_xml_renderer_with_invalid_asset(self):
+        form_source = """
+            {
+                "survey": [
+                    {"name":"start","type":"start"},
+                    {"name":"end","type":"end"},
+                    {"name":"present_in_v2","type":"integer", "label": "present in v2"},
+                    {"name":"${fail}","type":"text"}],
+                "settings": [
+                    {}
+                ]
+            }
+         """
+        self.client.login(username='someuser', password='someuser')
+        asset = self.create_asset(
+            'Take my snapshot!', form_source, format='json'
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        asset_detail_response = self.client.get(asset_url)
+        downloads = asset_detail_response.data.get('downloads', [])
+        xml_url = next(
+            (entry['url'] for entry in downloads if entry.get('format') == 'xml'), None
+        )
+        assert xml_url, 'XML download URL not found in asset detail response.'
+
+        # Make sure the XML renderer raises a ParseError
+        with self.assertRaises(ParseError) as context:
+            self.client.get(xml_url)
+
+        # Check that the error message references the problematic field.
+        # pyxform 3.x names it '_fail'; 1.x quotes it as '${fail}' — both
+        # contain 'fail', which is the common denominator.
+        self.assertIn('fail', str(context.exception))
+
+    def test_anonymous_can_create_snapshot_when_asset_shared_public(self):
+        self.client.login(username='someuser', password='someuser')
+        asset = self.create_asset('Public asset', self.form_source, format='json')
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+
+        # Assign 'view' permission on the asset to AnonymousUser
+        asset.assign_perm(get_anonymous_user(), PERM_VIEW_ASSET)
+
+        self.client.logout()
+
+        # Try to create a snapshot as an anonymous user
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        data = {'asset': asset_url}
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_asset_snapshot_list_handles_anonymous_user(self):
+        """
+        Test that list endpoint safely handles anonymous users
+        """
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.get(snapshot_list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+
+
+class TestAssetSnapshotDetail(AssetSnapshotBase):
+
+    multilanguages_form_source = """
+        {
+            "survey": [
+                {
+                    "type": "text",
+                    "label": ["Text+Question", "Texte+Question"],
+                    "required": "true"
+                },
+                {
+                    "name": "start",
+                    "type": "start"
+                },
+                {
+                    "name": "end",
+                    "type": "end"
+                }
+            ],
+            "settings": {"default_language": "English (en)"},
+            "translated": ["label"],
+            "translations": ["English (en)", "Francais (fr)"]
+        }
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        self.language_fr = Language.objects.create(code='fr', name='Français')
+        self.language_en = Language.objects.create(code='en', name='English')
+        FormDisclaimer.objects.create(
+            language=self.language_en,
+            default=True,
+            message='Global message in English'
+        )
+
+    def test_preview_with_global_form_disclaimer(self):
+        self.client.login(username='someuser', password='someuser')
+        asset = self.create_asset(
+            'Take my snapshot!', self.form_source, format='json'
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        data = {'asset': asset_url}
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, msg=response.data
+        )
+        snapshot_url = reverse(
+            self._get_endpoint('assetsnapshot-xml-with-disclaimer'),
+            kwargs={'uid_asset_snapshot': response.data['uid'], 'format': 'xml'},
+        )
+        xml_response = self.client.get(snapshot_url)
+        self.assertContains(xml_response, 'Global message in English')
+
+    def test_preview_with_overridden_form_disclaimer(self):
+        self.client.login(username='someuser', password='someuser')
+        asset = self.create_asset(
+            'Take my snapshot!', self.form_source, format='json'
+        )
+        FormDisclaimer.objects.create(
+            language=self.language_en,
+            message='Overridden message in English',
+            asset=asset,
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        data = {'asset': asset_url}
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, msg=response.data
+        )
+        snapshot_url = reverse(
+            self._get_endpoint('assetsnapshot-xml-with-disclaimer'),
+            kwargs={'uid_asset_snapshot': response.data['uid'], 'format': 'xml'},
+        )
+        xml_response = self.client.get(snapshot_url)
+        self.assertContains(xml_response, 'Overridden message in English')
+        self.assertNotContains(xml_response, 'Global message in English')
+
+    def test_preview_with_hidden_global_form_disclaimer(self):
+        self.client.login(username='someuser', password='someuser')
+        asset = self.create_asset(
+            'Take my snapshot!', self.form_source, format='json'
+        )
+        FormDisclaimer.objects.create(
+            hidden=True,
+            asset=asset,
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        data = {'asset': asset_url}
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, msg=response.data
+        )
+        snapshot_url = reverse(
+            self._get_endpoint('assetsnapshot-xml-with-disclaimer'),
+            kwargs={'uid_asset_snapshot': response.data['uid'], 'format': 'xml'},
+        )
+        xml_response = self.client.get(snapshot_url)
+        self.assertNotContains(xml_response, 'Global message in English')
+        self.assertNotContains(xml_response, '<input appearance="kobo-disclaimer"')
+
+    def test_preview_with_multilanguages_form_and_global_disclaimer(self):
+        self.client.login(username='someuser', password='someuser')
+        asset = self.create_asset(
+            'Take my snapshot!', self.multilanguages_form_source, format='json'
+        )
+        FormDisclaimer.objects.create(
+            language=self.language_fr,
+            message='Message global en français',
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        data = {'asset': asset_url}
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, msg=response.data
+        )
+        snapshot_url = reverse(
+            self._get_endpoint('assetsnapshot-xml-with-disclaimer'),
+            kwargs={'uid_asset_snapshot': response.data['uid'], 'format': 'xml'},
+        )
+        xml_response = self.client.get(snapshot_url)
+        self.assertContains(xml_response, 'Global message in English')
+        self.assertContains(xml_response, 'Message global en français')
+
+    def test_preview_with_multilanguages_form_and_overridden_disclaimer(self):
+        self.client.login(username='someuser', password='someuser')
+
+        asset = self.create_asset(
+            'Take my snapshot!', self.multilanguages_form_source, format='json'
+        )
+        FormDisclaimer.objects.create(
+            language=self.language_en,
+            message='Overridden message in English',
+            asset=asset,
+        )
+        FormDisclaimer.objects.create(
+            language=self.language_fr,
+            message='Message remplacé en français',
+            asset=asset,
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        data = {'asset': asset_url}
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, msg=response.data
+        )
+        snapshot_url = reverse(
+            self._get_endpoint('assetsnapshot-xml-with-disclaimer'),
+            kwargs={'uid_asset_snapshot': response.data['uid'], 'format': 'xml'},
+        )
+        xml_response = self.client.get(snapshot_url)
+        self.assertNotContains(xml_response, 'Global message in English')
+        self.assertNotContains(xml_response, 'Message global en français')
+        self.assertContains(xml_response, 'Overridden message in English')
+        self.assertContains(xml_response, 'Message remplacé en français')
+
+    def test_preview_with_multilanguages_form_and_hidden_disclaimer(self):
+        self.client.login(username='someuser', password='someuser')
+
+        asset = self.create_asset(
+            'Take my snapshot!', self.multilanguages_form_source, format='json'
+        )
+        FormDisclaimer.objects.create(
+            hidden=True,
+            asset=asset
+        )
+        asset_url = reverse(self._get_endpoint('asset-detail'), args=(asset.uid,))
+        data = {'asset': asset_url}
+        snapshot_list_url = reverse(self._get_endpoint('assetsnapshot-list'))
+        response = self.client.post(snapshot_list_url, data, format='json')
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, msg=response.data
+        )
+        snapshot_url = reverse(
+            self._get_endpoint('assetsnapshot-xml-with-disclaimer'),
+            kwargs={'uid_asset_snapshot': response.data['uid'], 'format': 'xml'},
+        )
+        xml_response = self.client.get(snapshot_url)
+        self.assertNotContains(xml_response, 'Global message in English')
+        self.assertNotContains(xml_response, 'Message global en français')
+        self.assertNotContains(xml_response, 'Global message in English')
+        self.assertNotContains(xml_response, '<input appearance="kobo-disclaimer"')

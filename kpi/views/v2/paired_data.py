@@ -1,197 +1,183 @@
 # coding: utf-8
 from django.conf import settings
-from django.core.files.base import ContentFile
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.utils import timezone
-from rest_framework import renderers, viewsets
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework_extensions.mixins import NestedViewSetMixin
-from shortuuid import ShortUUID
 
-from kpi.constants import SUBMISSION_FORMAT_TYPE_XML
+from kobo.apps.audit_log.base_views import AuditLoggedModelViewSet
+from kobo.apps.audit_log.models import AuditType
 from kpi.models import Asset, AssetFile, PairedData
-from kpi.permissions import (
-    AssetEditorPermission,
-    XMLExternalDataPermission,
+from kpi.permissions import AssetEditorPermission, XMLExternalDataPermission
+from kpi.renderers import SubmissionXMLRenderer
+from kpi.schema_extensions.v2.paired_data.serializers import (
+    ExternalResponse,
+    PairedDataPatchPayload,
+    PairedDataResponse,
 )
 from kpi.serializers.v2.paired_data import PairedDataSerializer
-from kpi.renderers import SubmissionXMLRenderer
-from kpi.utils.hash import calculate_hash
+from kpi.utils.paired_data import build_and_save_paired_data_xml
+from kpi.utils.schema_extensions.markdown import read_md
+from kpi.utils.schema_extensions.response import (
+    open_api_200_ok_response,
+    open_api_201_created_response,
+    open_api_204_empty_response,
+)
 from kpi.utils.viewset_mixins import AssetNestedObjectViewsetMixin
-from kpi.utils.xml import strip_nodes, add_xml_declaration
 
 
-class PairedDataViewset(AssetNestedObjectViewsetMixin,
-                        NestedViewSetMixin,
-                        viewsets.ModelViewSet):
+@extend_schema(
+    tags=['Survey data'],
+    parameters=[
+        OpenApiParameter(
+            name='uid_asset',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='UID of the parent asset',
+        ),
+    ],
+)
+@extend_schema_view(
+    create=extend_schema(
+        description=read_md('kpi', 'paired_data/create.md'),
+        responses=open_api_201_created_response(
+            PairedDataResponse,
+            require_auth=False,
+            raise_access_forbidden=False,
+        ),
+    ),
+    destroy=extend_schema(
+        description=read_md('kpi', 'paired_data/delete.md'),
+        responses=open_api_204_empty_response(
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_paired_data',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the paired data',
+            ),
+        ],
+    ),
+    external=extend_schema(
+        description=read_md('kpi', 'paired_data/external.md'),
+        responses=open_api_200_ok_response(
+            ExternalResponse,
+            media_type='application/xml',
+            error_media_type='application/xml',
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_paired_data',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the paired data',
+            ),
+        ],
+    ),
+    list=extend_schema(
+        description=read_md('kpi', 'paired_data/list.md'),
+        responses=open_api_200_ok_response(
+            PairedDataResponse,
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+    ),
+    update=extend_schema(
+        exclude=True,
+    ),
+    retrieve=extend_schema(
+        description=read_md('kpi', 'paired_data/retrieve.md'),
+        responses=open_api_200_ok_response(
+            PairedDataResponse,
+            require_auth=False,
+            raise_access_forbidden=False,
+            validate_payload=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_paired_data',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the paired data',
+            ),
+        ],
+    ),
+    partial_update=extend_schema(
+        description=read_md('kpi', 'paired_data/update.md'),
+        request={'application/json': PairedDataPatchPayload},
+        responses=open_api_200_ok_response(
+            PairedDataResponse,
+            require_auth=False,
+            raise_access_forbidden=False,
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='uid_paired_data',
+                type=str,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='UID of the paired data',
+            ),
+        ],
+    ),
+)
+class PairedDataViewset(
+    AssetNestedObjectViewsetMixin, NestedViewSetMixin, AuditLoggedModelViewSet
+):
     """
-    ## List of paired project endpoints
-
-    ### Retrieve all paired projects
-
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/assets/<code>{asset_uid}</code>/paired-data/
-    </pre>
-
-    > Example
-    >
-    >       curl -X GET https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/
-
-    > Response
-    >
-    >       HTTP 200 OK
-    >       {
-    >           "count": 1,
-    >           "next": null,
-    >           "previous": null,
-    >           "results": [
-    >               {
-    >                   "source": "https://[kpi]/api/v2/assets/aFDZxidYs5X5oJjm2Tmdf5/",
-    >                   "fields": [],
-    >                   "filename": "external-data.xml",
-    >                   "url": "https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/"
-    >               }
-    >           ]
-    >       }
-    >
-
-    This endpoint is paginated and accepts these parameters:
-
-    - `offset`: The initial index from which to return the results
-    - `limit`: Number of results to return per page
-
-    ### Create a connection between two projects
-
-    <pre class="prettyprint">
-    <b>POST</b> /api/v2/assets/<code>{asset_uid}</code>/paired-data/
-    </pre>
-
-    > Example
-    >
-    >       curl -X POST https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/
-
-    > **Payload**
-    >
-    >        {
-    >           "source": "https://[kpi]/api/v2/assets/aFDZxidYs5X5oJjm2Tmdf5/",
-    >           "filename": "external-data.xml",
-    >           "fields": [],
-    >        }
-    >
-    >
-    > Response
-    >
-    >       HTTP 201 Created
-    >       {
-    >           "source": "https://[kpi]/api/v2/assets/aFDZxidYs5X5oJjm2Tmdf5/",
-    >           "fields": [],
-    >           "filename": "external-data.xml",
-    >           "url": "https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/"
-    >       }
-    >
-
-    * `fields`: Optional. List of questions whose responses will be retrieved
-        from the source data. If missing or empty, all responses will be
-        retrieved. Questions must be identified by full group path separated by
-        slashes, e.g. `group/subgroup/question_name`.
-    * `filename`: Must be unique among all asset files. Only accepts letters, numbers and '-'.
-
-    ### Retrieve a connection between two projects
-
-    <pre class="prettyprint">
-    <b>GET</b> /api/v2/assets/<code>{asset_uid}</code>/paired-data/{paired_data_uid}/
-    </pre>
-
-    > Example
-    >
-    >       curl -X GET https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/
-    >
-    > Response
-    >
-    >       HTTP 200 Ok
-    >       {
-    >           "source": "https://[kpi]/api/v2/assets/aFDZxidYs5X5oJjm2Tmdf5/",
-    >           "fields": [],
-    >           "filename": "external-data.xml",
-    >           "url": "https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/"
-    >       }
-    >
-
-    ### Update a connection between two projects
-
-    <pre class="prettyprint">
-    <b>PATCH</b> /api/v2/assets/<code>{asset_uid}</code>/paired-data/{paired_data_uid}/
-    </pre>
-
-    > Example
-    >
-    >       curl -X PATCH https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/
-    >
-    > **Payload**
-    >
-    >        {
-    >           "filename": "data-external.xml",
-    >           "fields": ['group/question_1']",
-    >        }
-    >
-
-    _Notes: `source` cannot be changed_
-
-    > Response
-    >
-    >       HTTP 200 Ok
-    >       {
-    >           "source": "https://[kpi]/api/v2/assets/aFDZxidYs5X5oJjm2Tmdf5/",
-    >           "fields": ['group/question_1'],
-    >           "filename": "data-external.xml",
-    >           "url": "https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/"
-    >       }
-    >
-
-    ### Remove a connection between two projects
-
-    <pre class="prettyprint">
-    <b>DELETE</b> /api/v2/assets/<code>{asset_uid}</code>/paired-data/{paired_data_uid}/
-    </pre>
-
-    > Example
-    >
-    >       curl -X DELETE https://[kpi]/api/v2/assets/aSAvYreNzVEkrWg5Gdcvg/paired-data/pdFQheFF4cWbtcinRUqc64q/
-    >
-    > Response
-    >
-    >       HTTP 204 No Content
-    >
-    >
+    Available actions:
+     - create        → POST      /api/v2/asset/{uid_asset}/paired-data/
+     - delete        → DELETE    /api/v2/asset/{uid_asset}/paired-data/{uid_paired_data}/
+     - external      → GET       /api/v2/asset/{uid_asset}/paired-data/{uid_paired_data}/external/  # noqa
+     - list          → GET       /api/v2/asset/{uid_asset}/paired-data/
+     - retrieve      → GET       /api/v2/asset/{uid_asset}/paired-data/{uid_paired_data}/
+     - update        → PATCH     /api/v2/asset/{uid_asset}/paired-data/{uid_paired_data}/
 
 
-    ### CURRENT ENDPOINT
+     Documentation:
+     - docs/api/v2/paired_data/create.md
+     - docs/api/v2/paired_data/delete.md
+     - docs/api/v2/paired_data/external.md
+     - docs/api/v2/paired_data/list.md
+     - docs/api/v2/paired_data/retrieve.md
+     - docs/api/v2/paired_data/update.md
     """
 
     parent_model = Asset
-    renderer_classes = (
-        renderers.BrowsableAPIRenderer,
-        renderers.JSONRenderer,
-        SubmissionXMLRenderer,
-    )
     lookup_field = 'paired_data_uid'
+    lookup_url_kwarg = 'uid_paired_data'
     permission_classes = (AssetEditorPermission,)
     serializer_class = PairedDataSerializer
+    log_type = AuditType.PROJECT_HISTORY
+    logged_fields = [
+        ('source_name', 'source.name'),
+        ('object_id', 'asset.id'),
+        'fields',
+        ('source_uid', 'source.uid'),
+        'asset.owner.username',
+    ]
 
-    @action(detail=True,
-            methods=['GET'],
-            permission_classes=[XMLExternalDataPermission],
-            renderer_classes=[SubmissionXMLRenderer],
-            filter_backends=[],
-            )
-    def external(self, request, paired_data_uid, **kwargs):
-        """
-        Returns an XML which contains data submitted to paired asset
-        Creates the endpoints
-        - /api/v2/assets/<parent_lookup_asset>/paired-data/<paired_data_uid>/external/
-        - /api/v2/assets/<parent_lookup_asset>/paired-data/<paired_data_uid>/external.xml/
-        """
+    @action(
+        detail=True,
+        methods=['GET'],
+        permission_classes=[XMLExternalDataPermission],
+        renderer_classes=[SubmissionXMLRenderer],
+        filter_backends=[],
+    )
+    def external(self, request, uid_paired_data, **kwargs):
         paired_data = self.get_object()
 
         # Retrieve the source if it exists
@@ -202,7 +188,7 @@ class PairedDataViewset(AssetNestedObjectViewsetMixin,
             # deactivated after it has been paired with current form.
             # We don't want to keep zombie files on storage.
             try:
-                asset_file = self.asset.asset_files.get(uid=paired_data_uid)
+                asset_file = self.asset.asset_files.get(uid=uid_paired_data)
             except AssetFile.DoesNotExist:
                 pass
             else:
@@ -217,16 +203,17 @@ class PairedDataViewset(AssetNestedObjectViewsetMixin,
         # Retrieve data from related asset file.
         # If data has already been fetched once, an `AssetFile` should exist.
         # Otherwise, we create one to store the generated XML.
+        refresh_async = False
         try:
-            asset_file = self.asset.asset_files.get(uid=paired_data_uid)
+            asset_file = self.asset.asset_files.get(uid=uid_paired_data)
         except AssetFile.DoesNotExist:
             asset_file = AssetFile(
-                uid=paired_data_uid,
+                uid=uid_paired_data,
                 asset=self.asset,
                 file_type=AssetFile.PAIRED_DATA,
                 user=self.asset.owner,
             )
-            # When asset file is new, we consider its content as expired to
+            # When the asset file is new, we consider its content as expired to
             # force its creation below
             has_expired = True
         else:
@@ -242,70 +229,36 @@ class PairedDataViewset(AssetNestedObjectViewsetMixin,
                 has_expired = (
                     timedelta.total_seconds() > settings.PAIRED_DATA_EXPIRATION
                 )
+                # File exists and is stale only due to time: regenerate in the
+                # background so the manifest request is not blocked by fetching
+                # and parsing a potentially large number of submissions.
+                refresh_async = has_expired
 
-        # ToDo evaluate adding headers for caching and a HTTP 304 status code
         if not has_expired:
-            return Response(asset_file.content.file.read().decode())
-
-        # If the content of `asset_file' has expired, let's regenerate the XML
-        submissions = source_asset.deployment.get_submissions(
-            self.asset.owner,
-            format_type=SUBMISSION_FORMAT_TYPE_XML
-        )
-        parsed_submissions = []
-        allowed_fields = paired_data.allowed_fields
-        random_uuid = ShortUUID().random(24)
-
-        for submission in submissions:
-            # Use `rename_root_node_to='data'` to rename the root node of each
-            # submission to `data` so that form authors do not have to rewrite
-            # their `xml-external` formulas any time the asset UID changes,
-            # e.g. when cloning a form or creating a project from a template.
-            # Set `use_xpath=True` because `paired_data.fields` uses full group
-            # hierarchies, not just question names.
-            parsed_submissions.append(
-                strip_nodes(
-                    submission,
-                    allowed_fields,
-                    use_xpath=True,
-                    rename_root_node_to='data',
-                    bulk_action_cache_key=random_uuid,
-                )
+            return self._xml_response(
+                request,
+                asset_file.content.file.read().decode(),
+                asset_file.md5_hash,
             )
 
-        filename = paired_data.filename
-        parsed_submissions_to_str = ''.join(parsed_submissions)
-        root_tag_name = SubmissionXMLRenderer.root_tag_name
-        xml_ = add_xml_declaration(
-            f'<{root_tag_name}>'
-            f'{parsed_submissions_to_str}'
-            f'</{root_tag_name}>'
+        if refresh_async:
+            from kpi.tasks import regenerate_paired_data
+
+            content = asset_file.content.file.read().decode()
+            regenerate_paired_data.delay(self.asset.uid, uid_paired_data)
+            # Return the current (possibly stale) content immediately.
+            # The manifest will reflect the new hash once the task completes.
+            return self._xml_response(request, content, asset_file.md5_hash)
+
+        # If the content of `asset_file' has expired, let's regenerate the XML
+        xml_ = build_and_save_paired_data_xml(
+            self.asset, asset_file, paired_data, source_asset, old_hash=old_hash
         )
+        return self._xml_response(request, xml_, asset_file.md5_hash)
 
-        if not parsed_submissions:
-            # We do not want to cache an empty file
-            return Response(xml_)
-
-        # We need to delete the current file (if it exists) when filename
-        # has changed. Otherwise, it would leave an orphan file on storage
-        if asset_file.pk and asset_file.content.name != filename:
-            asset_file.content.delete()
-
-        asset_file.content = ContentFile(xml_.encode(), name=filename)
-
-        # `xml_` is already there in memory, let's use its content to get its
-        # hash and store it within `asset_file` metadata
-        asset_file.set_md5_hash(calculate_hash(xml_, prefix=True))
-        asset_file.save()
-        if old_hash != asset_file.md5_hash:
-            # resync paired data to the deployment backend
-            self.asset.deployment.sync_media_files(AssetFile.PAIRED_DATA)
-
-        return Response(xml_)
-
-    def get_object(self):
+    def get_object_override(self):
         obj = self.get_queryset(as_list=False).get(
-            self.kwargs[self.lookup_field]
+            self.kwargs[self.lookup_url_kwarg]
         )
         if not obj:
             raise Http404
@@ -335,3 +288,63 @@ class PairedDataViewset(AssetNestedObjectViewsetMixin,
             source__names[record['uid']] = record['name']
         context_['source__names'] = source__names
         return context_
+
+    @staticmethod
+    def _xml_response(request, xml_content: str, md5_hash: str = None) -> HttpResponse:
+        """
+        Build an HttpResponse for an XML body with optional ETag validation.
+
+        Gzip compression is handled by nginx upstream, so it is not applied
+        here.
+
+        - If `md5_hash` is provided and the client's `If-None-Match` header
+          matches, returns HTTP 304 Not Modified.
+        - `ETag` and `Cache-Control` headers are added when `md5_hash`
+          is available.
+        """
+        etag_value = md5_hash.split(':')[-1] if md5_hash else None
+
+        if etag_value:
+            # `If-None-Match` can contain multiple comma-separated ETags.
+            # Handle weak validators (W/ prefix added by nginx when gzip is
+            # applied) and the wildcard (*) per-token.
+            raw_if_none_match = request.META.get('HTTP_IF_NONE_MATCH', '')
+            if raw_if_none_match:
+                for candidate in raw_if_none_match.split(','):
+                    token = candidate.strip()
+                    if not token:
+                        continue
+                    if token.startswith('W/'):
+                        token = token[2:].lstrip()
+                    if (
+                        token.startswith('"')
+                        and token.endswith('"')
+                        and len(token) >= 2
+                    ):
+                        token = token[1:-1]
+                    if token == '*' or token == etag_value:
+                        return HttpResponse(status=304)
+
+        xml_bytes = xml_content.encode()
+        response = HttpResponse(xml_bytes, content_type='text/xml; charset=utf-8')
+        response['Content-Length'] = len(xml_bytes)
+
+        if etag_value:
+            response['ETag'] = f'"{etag_value}"'
+            response['Cache-Control'] = (
+                f'private, max-age={settings.PAIRED_DATA_EXPIRATION}'
+            )
+
+        return response
+
+
+class OpenRosaDynamicDataAttachmentViewset(PairedDataViewset):
+    """
+    Only specific to OpenRosa manifest when projects are linked with DDA.
+    Enforce permission and renderer classes at the class level instead to be
+    sure they are taken into account while calling `viewset.as_view()`
+    """
+
+    permission_classes = [XMLExternalDataPermission]
+    renderer_classes = [SubmissionXMLRenderer]
+    filter_backends = []

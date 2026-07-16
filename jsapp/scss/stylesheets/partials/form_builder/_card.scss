@@ -1,14 +1,16 @@
-@use "sass:color";
+@use 'sass:color';
 @use 'scss/z-indexes';
-@use '~kobo-common/src/styles/colors';
+@use 'scss/colors';
+@use 'scss/_variables';
+@use 'scss/libs/_mdl';
 
 // ==========================================================================
 // Card (incl. Header and Expanded)
 // ==========================================================================
 
 .card {
-    border-radius: 0px;
-    font-family: $font;
+    border-radius: 0;
+    font-family: mdl.$font;
     font-weight: 600;
     font-size: 13px;
     line-height: 18px;
@@ -17,13 +19,13 @@
 
     &.card--error {
         padding: 12px 20px;
-        background-color: rgba(colors.$kobo-red, 0.5);
+        background-color: rgba(colors.$kobo-mid-red, 0.5);
     }
 
-.card__header {
-        border: $cardBorderStyle;
+    .card__header {
+        border: variables.$cardBorderStyle;
         // right padding needs to make space for absolute positioned icons
-        padding: 20px #{15px + $s-fb-row-locking-icons-width + $s-fb-row-buttons-width} 20px 75px;
+        padding: 20px #{15px + variables.$s-fb-row-locking-icons-width + variables.$s-fb-row-buttons-width} 20px 75px;
         min-height: 82px; // to fit all icons in
         display: block;
         background: colors.$kobo-white;
@@ -44,24 +46,25 @@
     }
 
     .card__text {
-        margin:auto;
+        margin: auto;
         display: inline-block;
         vertical-align: middle;
         width: 99%;
         position: relative;
 
         &.activated {
-            color: colors.$kobo-gray-40;
+            color: colors.$kobo-gray-700;
         }
+
         .card__buttons__multioptions {
             cursor: pointer;
             vertical-align: middle;
             text-align: right;
             position: absolute;
-            left:-34px;
-            top:50%;
+            left: -34px;
+            top: 50%;
             width: 32px;
-            margin-top:-30px;
+            margin-top: -30px;
             padding-top: 22px;
             padding-bottom: 22px;
 
@@ -83,10 +86,14 @@
         }
     }
 
+    .card__attr--file {
+      margin: 0;
+    }
+
     .card__header-title,
     .card__header-hint {
       &:focus {
-        @include form-builder-focus();
+        @include mdl.form-builder-focus;
       }
     }
 
@@ -100,10 +107,10 @@
         }
     }
     .card__header-title {
-        color: colors.$kobo-gray-40;
+        color: colors.$kobo-gray-700;
 
         &:focus {
-            color: colors.$kobo-gray-24;
+            color: colors.$kobo-gray-800;
           }
 
         &::placeholder {
@@ -117,32 +124,36 @@
         font-weight: 400;
 
         &::placeholder {
-            color: colors.$kobo-gray-40;
+            color: colors.$kobo-gray-700;
             font-style: italic;
         }
     }
+
     .card__option-translation {
         &--empty {
             opacity: 0.6;
         }
     }
+
     &.card--shaded .card__header-title {
-        opacity:0.3;
+        opacity: 0.3;
     }
 
     &--required {
-        .card__text:after {
+        .card__text::after {
             content: '*';
             position: absolute;
             top: -0.15em;
             left: -9px;
-            color: colors.$kobo-gray-40;
+            color: colors.$kobo-gray-700;
             font-size: 11px;
         }
+
         &.card--selectquestion {
             .card__text {
                 padding-left: 10px;
-                &:after {
+
+                &::after {
                     left: 1px;
                 }
             }
@@ -151,8 +162,8 @@
 }
 
 // pseudo-rule used only to increase card hover area to the left of the card
-.no-touch .card:before {
-    content: " ";
+.no-touch .card::before {
+    content: ' ';
     height: 100%;
     left: -60px;
     position: absolute;
@@ -161,14 +172,16 @@
 
 .sortable-active {
     .card__header {
-        border: $cardInSortBorderStyle;
+        border: variables.$cardInSortBorderStyle;
+
         .card__header-title {
-            color: $cardInSortBorderColor;
+            color: variables.$cardInSortBorderColor;
         }
     }
 }
+
 .card--error {
-    background-color: rgba(colors.$kobo-red, 0.5);
+    background-color: rgba(colors.$kobo-mid-red, 0.5);
 }
 
 // ==========================================================================
@@ -185,13 +198,15 @@ $cardIndicatorIconWidth: 21px;
     top: 0;
     width: $cardIndicatorWidth;
     height: 100%;
-    border-right: $cardBorderStyle;
+    border-right: variables.$cardBorderStyle;
 }
+
 .card--insort {
     .card__indicator {
-        border-right: $cardInSortThinBorderStyle;
+        border-right: variables.$cardInSortThinBorderStyle;
     }
 }
+
 .card__indicator__icon {
     position: absolute;
     top: 50%;
@@ -202,7 +217,7 @@ $cardIndicatorIconWidth: 21px;
     font-size: 20px;
     line-height: 20px;
     text-align: center;
-    color: colors.$kobo-gray-40;
+    color: colors.$kobo-gray-700;
 }
 
 // ==========================================================================
@@ -210,12 +225,12 @@ $cardIndicatorIconWidth: 21px;
 // ==========================================================================
 
 .card__buttons {
-    border: $cardBorderStyle;
+    border: variables.$cardBorderStyle;
     border-width: 0 0 0 1px;
     position: absolute;
     top: 0;
     right: 1px; // needed for settings icon to not cover the right border when active
-    width: $s-fb-row-buttons-width;
+    width: variables.$s-fb-row-buttons-width;
     height: 100%;
     z-index: z-indexes.$z-form-builder-card-buttons;
     display: flex;
@@ -236,12 +251,13 @@ $cardIndicatorIconWidth: 21px;
     position: absolute;
     width: 100%;
     height: 100%;
-    left: 0px;
-    top: 0px;
+    left: 0;
+    top: 0;
     z-index: z-indexes.$z-form-builder-card-shade;
     text-align: center;
     vertical-align: middle;
     display: none;
+
     span {
         position: relative;
         top: 35%;
@@ -252,39 +268,44 @@ $cardIndicatorIconWidth: 21px;
 
 .card--shaded .card__header--shade {
     display: block;
-    > span:after {
+
+    > span::after {
         content: attr(data-card-hover-text);
     }
 }
+
 .card__header.settings .card__header--shade {
-    background: rgba(colors.$kobo-gray-40, 0.5);
+    background: rgba(colors.$kobo-gray-700, 0.5);
 }
+
 .card__header.delete .card__header--shade {
-    background: rgba(colors.$kobo-red, 0.5);
+    background: rgba(colors.$kobo-mid-red, 0.5);
 }
+
 .card__header.duplicate .card__header--shade {
     background: rgba(colors.$kobo-blue, 0.5);
 }
+
 .card__header.add-to-library .card__header--shade {
     background: rgba(colors.$kobo-green, 0.5);
 }
 
 .card--insort {
     .card__buttons {
-        border-left: $cardInSortThinBorderStyle;
+        border-left: variables.$cardInSortThinBorderStyle;
     }
 }
 
 .card__buttons__button {
     height: 20px;
     line-height: 20px;
-    width: $s-fb-row-buttons-width;
+    width: variables.$s-fb-row-buttons-width;
     text-align: center;
     position: relative;
     cursor: pointer;
 
     &.card__buttons__button--gray {
-        color: colors.$kobo-gray-40;
+        color: colors.$kobo-gray-700;
     }
 
     &.card__buttons__button--red {
@@ -313,8 +334,8 @@ $cardIndicatorIconWidth: 21px;
     }
 
     &.card__buttons__button--activated {
-        color: colors.$kobo-gray-40;
-        background-color: colors.$kobo-gray-92;
+        color: colors.$kobo-gray-700;
+        background-color: colors.$kobo-gray-300;
         opacity: 1;
     }
 
@@ -335,6 +356,7 @@ $cardIndicatorIconWidth: 21px;
     .card__buttons {
         z-index: z-indexes.$z-form-builder-card-buttons + 1;
     }
+
     .card__header .card__text .bg {
         display: block;
     }

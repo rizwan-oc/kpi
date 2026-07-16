@@ -1,4 +1,4 @@
-@use '~kobo-common/src/styles/colors';
+@use 'scss/colors';
 
 .form-sidebar__item--collection {
   padding-left: 10px !important;
@@ -9,8 +9,8 @@
 {
   .form-sidebar__itemlink {
     padding: 0px 10px 0px 0px;
-    min-width: 145px;
-    max-width: 145px;
+    min-width: 160px;
+    max-width: 160px;
 
     i {
       font-size: 24px;

@@ -142,10 +142,10 @@ class TwoDatabaseConfigurationChecker:
         return True
 
     def do_checks(self, app_configs, **kwargs):
-        # Bypass these checks when testing (cypress)
-        if settings.TESTING == True:
-            return self.errors
-        
+
+        if settings.ENV == 'testing':
+            return []
+
         checks = [
             self.check_for_two_databases,
             self.check_for_distinct_databases,

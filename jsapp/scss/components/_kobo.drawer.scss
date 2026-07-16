@@ -1,37 +1,46 @@
+@use 'scss/breakpoints';
 @use 'scss/z-indexes';
-@use '~kobo-common/src/styles/colors';
+@use 'scss/colors';
+@use 'scss/_variables';
+@use 'scss/libs/_mdl';
 
 // drawer (sidebar)
 
-.k-drawer {
-  height: calc(100% - #{$layout-desktop-header-height});
-  top: $layout-desktop-header-height;
-  width: 212px;
-  position: absolute;
+.page-wrapper--fixed-drawer .k-drawer {
   left: 0;
-  display: flex;
-  flex-direction: row;
-  border-right: 2px solid colors.$kobo-gray-92;
 }
 
-// only add the margin for drawer if drawer exists (e.g. no drawer when logged out)
-.k-drawer + .mdl-layout__content {
-  margin-left: 212px; // for drawer
+.k-drawer {
+  @include mdl.box-shadow-mid;
+
+  position: fixed;
+  z-index: z-indexes.$z-kobo-drawer;
+  // We need some pxs more as there is shadow on the drawer.
+  left: -1 * variables.$s-drawer-width - 10px;
+  transition: left 0.5s;
+  background-color: colors.$kobo-white;
+  height: calc(100% - #{mdl.$layout-desktop-header-height});
+  top: mdl.$layout-desktop-header-height;
+  // OpenClinica: fixed drawer width (was variables.$s-drawer-width)
+  width: 242px;
+  display: flex;
+  flex-direction: row;
+  border-right: 2px solid colors.$kobo-gray-300;
 }
 
 .k-drawer__primary-icons {
   display: flex;
   flex-direction: column;
-  width: $drawer-icons-width;
+  width: variables.$drawer-icons-width;
   height: 100%;
-  background-color: $drawer-background;
+  background-color: variables.$drawer-background;
 }
 
 .k-drawer__link {
   font-size: 26px;
   margin: 6px 0;
   text-align: center;
-  color: colors.$kobo-gray-40;
+  color: colors.$kobo-gray-700;
   padding: 0;
   border-left: 3px solid transparent;
 
@@ -53,7 +62,7 @@
   left: 0;
   bottom: 0;
   position: absolute;
-  width: $drawer-icons-width;
+  width: variables.$drawer-icons-width;
 
   .k-drawer__link {
     padding: 0;
@@ -62,7 +71,7 @@
     text-align: center;
     font-weight: normal;
     position: relative;
-    color: colors.$kobo-gray-40;
+    color: colors.$kobo-gray-700;
 
     &:hover {
       color: colors.$kobo-teal;
@@ -77,36 +86,29 @@
 }
 
 .k-drawer__sidebar {
-  // width: calc(100% - #{$drawer-icons-width});
+  // OpenClinica: full width (was calc(100% - #{variables.$drawer-icons-width}))
   width: 100%;
   height: 100%;
   padding: 12px 5px;
   display: flex;
   flex-direction: column;
-
-  button.mdl-button {
-    width: 100%;
-  }
 }
 
-@media screen and (max-width: 999px) {
+@media screen and (min-width: breakpoints.$bMobileMenu) {
   .k-drawer {
-    position: fixed;
-    z-index: z-indexes.$z-kobo-drawer;
-    // We need some pxs more as there is shadow on the drawer.
-    left: -1 * $s-drawer-width - 10px;
-    transition: left 0.5s;
-    background-color: colors.$kobo-white;
-
-    @include box-shadow-mid;
+    position: absolute;
+    left: 0;
+    transition: none;
   }
 
   .page-wrapper--fixed-drawer .k-drawer {
+    // OpenClinica: keep drawer pinned and widen on desktop (was left: unset)
     left: 0;
-    width: 282px;
+    width: 242px;
   }
 
+  // only add the margin for drawer if drawer exists (e.g. no drawer when logged out)
   .k-drawer + .mdl-layout__content {
-    margin-left: 0;
+    margin-left: 242px; // for drawer (OpenClinica: was variables.$s-drawer-width)
   }
 }

@@ -1,25 +1,24 @@
-@use '~kobo-common/src/styles/colors';
+@use 'scss/colors';
 @use 'scss/z-indexes';
-@use 'scss/sizes';
 @use 'scss/_variables';
 
 .library-actions {
   position: absolute;
-  top: sizes.$x10;
-  right: sizes.$x5;
+  top: 10px;
+  right: 5px;
   z-index: z-indexes.$z-table-row-buttons;
-  width: sizes.$x400;
+  width: 400px;
   display: flex;
   justify-content: end;
 
   .library-actions-buttons {
-    width: sizes.$x60;
-    font-size: sizes.$x24;
-    padding-top: sizes.$x3;
+    width: 60px;
+    font-size: 24px;
+    padding-top: 3px;
 
     .library-actions-buttons__button {
       cursor: pointer;
-      margin-right: sizes.$x5;
+      margin-right: 5px;
       color: colors.$kobo-gray-40;
 
       &:hover {
@@ -35,12 +34,12 @@
   }
 
   .library-type-filter {
-    width: sizes.$x250;
-    margin-left: sizes.$x20;
+    width: 250px;
+    margin-left: 20px;
 
     .kobo-select {
       display: inline-block;
-      min-width: sizes.$x150;
+      min-width: 150px;
     }
 
   }
@@ -52,7 +51,9 @@
 
 .breadcrumbs {
   &.breadcrumbs--gray-wrapper {
-    padding: sizes.$x10 !important;
+    padding: 10px !important;
     height: #{(variables.$s-breadcrumbs-height - 10px)} !important;
   }
+
+
 }

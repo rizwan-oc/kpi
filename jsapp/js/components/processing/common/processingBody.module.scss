@@ -1,0 +1,217 @@
+@use 'scss/colors';
+@use 'scss/mixins';
+@use 'scss/breakpoints';
+
+/**
+ * This file contains all the shared styles for the content part of the Single
+ * Processing Route.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.root.viewAnalysis {
+  // These styles are needed for the sticky header to work
+  height: auto;
+  min-height: 100%;
+  // AnalysisHeader handles the top padding
+  padding-top: 0;
+}
+
+// The content of these steps is different.
+.root.stepBegin,
+.root.stepConfig {
+  max-width: 600px + (2 * 30px); // include paddings
+  margin: 0 auto;
+}
+
+.root.stepConfig :global .loadingSpinner {
+  height: auto;
+}
+
+.root.stepBegin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.root :global h2 {
+  font-size: 16px;
+  font-weight: 400;
+  text-align: center;
+}
+
+.root :global p {
+  text-align: center;
+  line-height: 1.6;
+}
+
+.root :global h2,
+.root :global p {
+  margin: 0;
+
+  &:not(:last-child) {
+    margin-bottom: 20px;
+  }
+}
+
+.root :global .region-selector {
+  margin: 0;
+
+  &:not(:last-child) {
+    margin-bottom: 40px;
+  }
+}
+
+.text {
+  white-space: pre-wrap;
+  border-top: 2px solid colors.$kobo-gray-200;
+  padding-top: 16px;
+  width: 100%;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.textarea {
+  border: 2px solid colors.$kobo-gray-200;
+  border-radius: 6px;
+  padding: 16px;
+  resize: none;
+  width: 100%;
+  flex: 1;
+}
+
+.header {
+  font-weight: 400;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.header:not(:first-child) {
+  margin-top: 32px;
+}
+
+.footer {
+  @include mixins.centerRowFlex;
+
+  padding: 20px 0;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.footerRightButtons {
+  @include mixins.centerRowFlex;
+
+  gap: 14px;
+}
+
+.footerCenterButtons {
+  @include mixins.centerRowFlex;
+
+  flex: 1;
+  justify-content: center;
+  gap: 14px;
+}
+
+/*
+ * transxHeader
+ */
+
+.transxHeader {
+  @include mixins.centerRowFlex;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+
+.transxHeaderButtons {
+  @include mixins.centerRowFlex;
+
+  flex: 1;
+  justify-content: flex-end;
+  gap: inherit;
+}
+
+.transxHeaderLanguage {
+  font-weight: 700;
+  // With single column layout this can get very long or very short
+  max-width: 30%;
+
+  &:not(:first-child) {
+    margin-left: 4px;
+  }
+}
+
+.transxHeaderDate {
+  @include mixins.textEllipsis;
+
+  background-color: colors.$kobo-light-storm;
+  height: 28px;
+  line-height: 28px;
+  border-radius: 14px;
+  padding: 0 14px;
+}
+
+@include breakpoints.breakpoint(veryNarrow) {
+  .root {padding: 20px;}
+
+  .root.stepBegin,
+  .root.stepConfig {
+    padding-top: 30px;
+  }
+
+  .header {
+    font-size: 16px;
+    line-height: 18px;
+  }
+
+  .transxHeaderDateLong {display: none;}
+}
+
+@include breakpoints.breakpoint(narrowAndUp) {
+  .root {padding: 30px;}
+
+  .root.stepBegin,
+  .root.stepConfig {
+    padding-top: 50px;
+  }
+
+  .header {
+    font-size: 18px;
+    line-height: 20px;
+  }
+
+  .transxHeaderDateShort {display: none;}
+}
+
+@include breakpoints.breakpoint(medium) {
+  .transxHeader {
+    gap: 12px;
+  }
+
+  .transxHeaderLanguage {
+    // cramped two columns layout - this value makes sure we don't overflow
+    // horizontally
+    max-width: 140px;
+  }
+}
+
+@include breakpoints.breakpoint(wide) {
+  .transxHeaderLanguage {
+    max-width: 140px;
+  }
+}
+
+@include breakpoints.breakpoint(wideAndUp) {
+  .transxHeader {
+    gap: 20px;
+  }
+}
+
+@include breakpoints.breakpoint(veryWide) {
+  .transxHeaderLanguage {
+    max-width: 250px;
+  }
+}

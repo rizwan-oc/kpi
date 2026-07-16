@@ -8,11 +8,11 @@ $rowView = require './view.row'
 $baseView = require './view.pluggedIn.backboneView'
 $viewUtils = require './view.utils'
 alertify = require 'alertifyjs'
-isAssetLockable = require('js/components/locking/lockingUtils').isAssetLockable
-hasAssetRestriction = require('js/components/locking/lockingUtils').hasAssetRestriction
-LOCKING_RESTRICTIONS = require('js/components/locking/lockingConstants').LOCKING_RESTRICTIONS
-LOCKING_UI_CLASSNAMES = require('js/components/locking/lockingConstants').LOCKING_UI_CLASSNAMES
-isEConsentSignatureRow = require('js/components/formBuilder/econsentSignature').isEConsentSignatureRow
+isAssetLockable = require('#/components/locking/lockingUtils').isAssetLockable
+hasAssetRestriction = require('#/components/locking/lockingUtils').hasAssetRestriction
+LockingRestrictionName = require('#/components/locking/lockingConstants').LockingRestrictionName
+LOCKING_UI_CLASSNAMES = require('#/components/locking/lockingConstants').LOCKING_UI_CLASSNAMES
+isEConsentSignatureRow = require('#/components/formBuilder/econsentSignature').isEConsentSignatureRow
 
 module.exports = do ->
   surveyApp = {}
@@ -145,7 +145,7 @@ module.exports = do ->
       @canAddToLibrary = options.canAddToLibrary or false
       @surveyStateStore = options.stateStore || {trigger:$.noop, setState:$.noop}
 
-      $(document).on 'click', @deselect_rows
+      $(document).on 'click', @deselect_rows.bind(@)
 
       @survey.settings.on 'change:form_id', (model, value) =>
         $('.form-id').text(value)
@@ -218,7 +218,7 @@ module.exports = do ->
       @activateGroupButton(false)
       return
 
-    deselect_rows: (evt) =>
+    deselect_rows: (evt) ->
       # clicking on survey__row is aleady handled, so we ignore it - we only want
       # to deselet rows when clicking elsewhere
       $etp = $(evt.target).parents('.survey__row')
@@ -279,7 +279,7 @@ module.exports = do ->
       modelId = $et.closest('.survey__row').data('row-id')
       view = @__rowViews.get(modelId)
       throw new Error("view is not found for target element")  unless view
-      view
+      return view
 
     toggleCardSettings: (evt)->
       view = @_getViewForTarget(evt)
@@ -348,7 +348,7 @@ module.exports = do ->
       # hide all ways of adding new questions
       if (
         @isLockable() and
-        @hasRestriction(LOCKING_RESTRICTIONS.question_add.name)
+        @hasRestriction(LockingRestrictionName.question_add)
       )
         # "+" buttons
         @$('.js-add-row-button').addClass(LOCKING_UI_CLASSNAMES.HIDDEN)
@@ -720,7 +720,12 @@ module.exports = do ->
         closestAddrow.focus()
         $(document).one('keydown click', (evt) =>
           closestAddrow.removeClass('btn--addrow-force-show')
-          closestAddrow.blur()
+          # HACKFIX: previously it was `closestAddrow.blur()` but there was some weird race condition that causes UI
+          # crash when deleting a row while the addrow button was focused. To avoid this crash, we move focus to body
+          # instead of blurring the problematic node. Also we run it only if necessary.
+          if document.activeElement is closestAddrow[0]
+            document.body.focus()
+          return
         )
 
       null_top_row = @formEditorEl.find(".survey-editor__null-top-row").removeClass("expanded")
@@ -730,7 +735,7 @@ module.exports = do ->
         @features.multipleQuestions and
         not (
           @isLockable() and
-          @hasRestriction(LOCKING_RESTRICTIONS.question_order_edit.name)
+          @hasRestriction(LockingRestrictionName.question_order_edit)
         )
       )
         @activateSortable()

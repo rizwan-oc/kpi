@@ -1,7 +1,8 @@
-from django.contrib.auth.models import User
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 
+from kobo.apps.kobo_auth.shortcuts import User
 from kpi.constants import PERM_VIEW_ASSET, PERM_VIEW_SUBMISSIONS
 from kpi.models import Asset
 from kpi.tests.base_test_case import BaseAssetDetailTestCase
@@ -56,10 +57,14 @@ class UsageAPITestCase(BaseAssetDetailTestCase):
 
         self.asset.deployment.mock_submissions(submissions)
 
+    @override_settings(DEFAULT_SUBMISSIONS_COUNT_NUMBER_OF_DAYS=10000)
     def test_count_endpoint_owner(self):
+        # Submission submitted time is 2022-09-12.
+        # DEFAULT_SUBMISSIONS_COUNT_NUMBER_OF_DAYS must be big enough to include
+        # this date.
         count_url = reverse(
             self._get_endpoint('asset-counts-list'),
-            kwargs={'parent_lookup_asset': self.asset.uid}
+            kwargs={'uid_asset': self.asset.uid}
         )
         # Test owner
         response = self.client.get(count_url)
@@ -71,7 +76,7 @@ class UsageAPITestCase(BaseAssetDetailTestCase):
     def test_count_endpoint_anonymous_user(self):
         count_url = reverse(
             self._get_endpoint('asset-counts-list'),
-            kwargs={'parent_lookup_asset': self.asset.uid}
+            kwargs={'uid_asset': self.asset.uid}
         )
         # Test anonymous user
         self.client.logout()
@@ -81,7 +86,7 @@ class UsageAPITestCase(BaseAssetDetailTestCase):
     def test_count_endpoint_anonymous_user_public_access(self):
         count_url = reverse(
             self._get_endpoint('asset-counts-list'),
-            kwargs={'parent_lookup_asset': self.asset.uid}
+            kwargs={'uid_asset': self.asset.uid}
         )
         # Test anonymous user with public access to data
         anonymous_user = get_anonymous_user()
@@ -93,7 +98,7 @@ class UsageAPITestCase(BaseAssetDetailTestCase):
     def test_count_endpoint_another_user_no_perms(self):
         count_url = reverse(
             self._get_endpoint('asset-counts-list'),
-            kwargs={'parent_lookup_asset': self.asset.uid}
+            kwargs={'uid_asset': self.asset.uid}
         )
         # Test another user without perms
         self.client.login(username='anotheruser', password='anotheruser')
@@ -102,10 +107,14 @@ class UsageAPITestCase(BaseAssetDetailTestCase):
         response = self.client.get(count_url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    @override_settings(DEFAULT_SUBMISSIONS_COUNT_NUMBER_OF_DAYS=10000)
     def test_count_endpoint_another_with_perms(self):
+        # Submission submitted time is 2022-09-12.
+        # DEFAULT_SUBMISSIONS_COUNT_NUMBER_OF_DAYS must be big enough to include
+        # this date.
         count_url = reverse(
             self._get_endpoint('asset-counts-list'),
-            kwargs={'parent_lookup_asset': self.asset.uid}
+            kwargs={'uid_asset': self.asset.uid}
         )
         response = self.client.get(count_url)
         # Test another user with perms

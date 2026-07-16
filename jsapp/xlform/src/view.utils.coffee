@@ -87,6 +87,7 @@ module.exports = do ->
     selector.on 'click', enable_edit
 
 
+  # DEAD CODE TODO: Doesn't seem to be used anywhere?
   viewUtils.reorderElemsByData = (selector, parent, dataAttribute)->
     arr = []
     parentEl = false
@@ -99,6 +100,7 @@ module.exports = do ->
       $el = $(@).detach()
       val = $el.data(dataAttribute)
       arr[val] = $el  if _.isNumber(val)
+      return
     $el.appendTo(parentEl)  for $el in arr when $el
     return
 
@@ -106,8 +108,9 @@ module.exports = do ->
     attArr = []
     for key, val of atts when val isnt ""
       attArr.push """<span class="atts"><i>#{key}</i>="<em>#{val}</em>"</span>"""
-    attArr.join("&nbsp;")
+    return attArr.join("&nbsp;")
 
+  # DEAD CODE TODO: unused?
   viewUtils.debugFrame = do ->
     $div = false
     debugFrameStyle =
@@ -125,12 +128,15 @@ module.exports = do ->
       $div = $("<div>", class: "well debug-frame").html("<code>#{html}</code>")
         .css(debugFrameStyle)
         .appendTo("body")
+      return
     showFn.close = ->
       if $div
         $div.remove()
         $div = false
-    showFn
+        return
+    return showFn
 
+  # DEAD CODE TODO: unused?
   viewUtils.launchQuestionLibrary = do ->
     launch = (opts={})->
       wrap = $("<div>", class: "js-click-remove-iframe iframe-bg-shade")
@@ -139,39 +145,42 @@ module.exports = do ->
         <section koboform-question-library=""></section>
       """).appendTo(wrap)
       wrap.click ()-> wrap.remove()
-      wrap
+      return wrap
 
-    launch
+    return launch
 
+  # DEAD CODE TODO: unused?
   viewUtils.enketoIframe = do ->
     enketoServer = "https://enketo.org"
     enketoPreviewUri = "/webform/preview"
     buildUrl = (previewUrl)->
-      """#{enketoServer}#{enketoPreviewUri}?form=#{previewUrl}"""
+      return """#{enketoServer}#{enketoPreviewUri}?form=#{previewUrl}"""
 
     _loadConfigs = (options)->
       if options.enketoPreviewUri
         enketoPreviewUri = options.enketoPreviewUri
       if options.enketoServer
         enketoServer = options.enketoServer
+      return
 
     clickCloserBackground = ->
-      $("<div>", class: "js-click-remove-iframe")
+      return $("<div>", class: "js-click-remove-iframe")
 
     launch = (previewUrl, options={})->
       _loadConfigs(options)
       $(".enketo-holder").append $("<iframe>", src: buildUrl(previewUrl))
-      $(".enketo-holder iframe").load ()->
+      return $(".enketo-holder iframe").load ()->
         # alert "iframe loaded yo!"
-        $(".enketo-loading-message").remove()
+        return $(".enketo-loading-message").remove()
 
     launch.close = ()->
       $(".iframe-bg-shade").remove()
-      $(".enketo-holder").remove()
+      return $(".enketo-holder").remove()
 
+    # DEAD CODE TODO: unused?
     launch.fromCsv = (surveyCsv, options={})->
       # Probably dead code? Can't find it being called anywhere, and the
-      # endpoint it uses doesn't exist anymore. —jnm 20230207
+      # endpoint it uses doesn't exist anymore. -jnm 20230207
       holder = $("<div>", class: "enketo-holder").html("""
         <div class='enketo-iframe-icon'></div>
         <div class="enketo-loading-message">
@@ -191,11 +200,11 @@ module.exports = do ->
 
       wrap.click ()->
         wrap.remove()
-        holder.remove()
+        return holder.remove()
 
       $('.enketo-holder .enketo-iframe-icon').click ()->
         wrap.remove()
-        holder.remove()
+        return holder.remove()
 
       previewServer = options.previewServer or ""
       data = JSON.stringify(body: surveyCsv)
@@ -211,23 +220,24 @@ module.exports = do ->
           if status is "success" and response and response.unique_string
             unique_string = response.unique_string
             launch("#{previewServer}/koboform/survey_preview/#{unique_string}")
-            options.onSuccess()  if options.onSuccess?
+            return options.onSuccess()  if options.onSuccess?
           else if status isnt "success"
             wrap.remove()
             holder.remove()
             informative_message = jqhr.responseText or jqhr.statusText
             if informative_message.split("\n").length > 0
-              informative_message = informative_message.split("\n")[0..2].join("<br>")
-            onError informative_message, title: 'Error launching preview'
+              return informative_message = informative_message.split("\n")[0..2].join("<br>")
+            return onError informative_message, title: 'Error launching preview'
           else if response and response.error
             wrap.remove()
             holder.remove()
-            onError response.error
+            return onError response.error
           else
             wrap.remove()
             holder.remove()
-            onError "SurveyPreview response JSON is not recognized"
+            return onError "SurveyPreview response JSON is not recognized"
+      return
 
-    launch
+    return launch
 
-  viewUtils
+  return viewUtils

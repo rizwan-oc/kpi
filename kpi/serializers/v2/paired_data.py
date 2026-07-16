@@ -3,6 +3,7 @@ import os
 import re
 
 from django.utils.translation import gettext as t
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.reverse import reverse
 
@@ -13,24 +14,28 @@ from kpi.constants import (
     PERM_PARTIAL_SUBMISSIONS,
     PERM_VIEW_SUBMISSIONS,
 )
-from kpi.fields import (
-    RelativePrefixHyperlinkedRelatedField,
-)
+from kpi.fields import RelativePrefixHyperlinkedRelatedField
 from kpi.models import Asset, AssetFile, PairedData
+from kpi.schema_extensions.v2.paired_data.fields import (
+    FieldFields,
+    SourceNameField,
+    URLField,
+)
 
 
 class PairedDataSerializer(serializers.Serializer):
 
     source = RelativePrefixHyperlinkedRelatedField(
         lookup_field='uid',
+        lookup_url_kwarg='uid_asset',
         queryset=Asset.objects.filter(asset_type=ASSET_TYPE_SURVEY),
         view_name='asset-detail',
         required=True,
         style={'base_template': 'input.html'}  # Render as a simple text box
     )
-    fields = serializers.ListField(child=serializers.CharField(), required=False)
+    fields = FieldFields(child=serializers.CharField(), required=False)
     filename = serializers.CharField()
-    source__name = serializers.SerializerMethodField()
+    source__name = SourceNameField()
 
     def create(self, validated_data):
         return self.__save(validated_data)
@@ -156,7 +161,7 @@ class PairedDataSerializer(serializers.Serializer):
             )
 
         # Force `posted_fields` to be an empty list to avoid useless parsing when
-        # fetching external xml endpoint (i.e.: /api/v2/assets/<asset_uid>/paired-data/<paired_data_uid>/external.xml)
+        # fetching external xml endpoint (i.e.: /api/v2/assets/<asset_uid>/paired-data/<uid_paired_data>/external.xml)
         if sorted(valid_fields) == sorted(posted_fields):
             posted_fields = []
 
@@ -221,6 +226,7 @@ class PairedDataSerializer(serializers.Serializer):
 
         attrs['filename'] = filename
 
+    @extend_schema_field(URLField)
     def __get_download_url(self, instance: 'kpi.models.PairedData') -> str:
         request = self.context['request']
         asset_uid = instance.asset.uid

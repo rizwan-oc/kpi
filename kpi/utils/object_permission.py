@@ -2,16 +2,18 @@
 from collections import defaultdict
 from typing import Union
 
+import django.dispatch
 from django.apps import apps
 from django.conf import settings
-from django.contrib.auth.models import User, Permission, AnonymousUser
+from django.contrib.auth.models import AnonymousUser, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.shortcuts import _get_queryset
 from django_request_cache import cache_for_request
 from rest_framework import serializers
 
-from kpi.constants import PERM_MANAGE_ASSET, PERM_FROM_KC_ONLY
+from kobo.apps.kobo_auth.shortcuts import User
+from kpi.constants import PERM_MANAGE_ASSET, PERM_VIEW_ASSET
 from kpi.utils.permissions import is_user_anonymous
 
 
@@ -79,6 +81,7 @@ def get_anonymous_user():
     return user
 
 
+@cache_for_request
 def get_database_user(user: Union[User, AnonymousUser]) -> User:
     """
     Returns a real `User` object if `user` is an `AnonymousUser`, otherwise
@@ -145,6 +148,21 @@ def get_objects_for_user(
     # queries, and it's nice to be able to pass in request.user blindly.
     user = get_database_user(user)
 
+    # Known limitation: this filter only checks for the existence of a
+    # deny=False row and does not verify the absence of a corresponding
+    # deny=True row. When a permission is explicitly revoked on a child asset
+    # via remove_perm(), deny records are created but the inherited deny=False
+    # rows are not removed (in purpose). Both coexist in the DB: has_perm() handles
+    # this correctly by subtracting deny from grant, but this queryset does not,
+    # so the child asset appears in the list even though the user cannot access
+    # it, i.e.: in the UI, the user will see the children but will not be to
+    # take actions on them.
+    #
+    # This is an edge case (only occurs when remove_perm() is called on an
+    # asset that has only inherited permissions). Fixing it properly would
+    # require a correlated subquery (EXISTS) that runs for every asset in the
+    # result set, penalizing the common case to handle a rare one.
+    # See https://linear.app/kobotoolbox/issue/DEV-1846/collection-shows-children-with-explicitly-revoked-inherited  # noqa
     if all_perms_required:
         for codename in codenames:
             perm_id = get_perm_ids_from_code_names(codename)
@@ -187,40 +205,45 @@ def get_perm_ids_from_code_names(
 
 
 def get_user_permission_assignments(
-    affected_object, user, object_permission_assignments
+    affected_object, user, object_permission_assignments, user_is_org_admin=False
 ):
     """
-    Works like `get_user_permission_assignments_queryset` but returns
-    a list instead of a queryset. It also needs a list of all
-    `affected_object`'s permission assignments to search for assignments
-    `user` is allowed to see.
+    Filters a list of permission assignment dicts (from .values() queries) to
+    only those that `user` is allowed to see, without hitting the database.
+
+    `manage_asset` is detected from `object_permission_assignments` itself,
+    avoiding the N+1 queries that `has_perm()` would cause in a list context.
+
+    For org admins, pass `user_is_org_admin=True` (pre-computed by the caller)
+    to grant full visibility without extra DB queries per asset.
 
     Args:
         affected_object (Asset)
         user (User)
-        object_permission_assignments (list):
+        object_permission_assignments (list[dict]): raw dicts from .values()
+        user_is_org_admin (bool): True if the user is an org admin for this asset
     Returns:
-         list
-
+        list[dict]
     """
-    user_permission_assignments = []
-    filtered_user_ids = None
-
     if not user or is_user_anonymous(user):
-        filtered_user_ids = [affected_object.owner_id]
-    elif not affected_object.has_perm(user, PERM_MANAGE_ASSET):
-        # Display only users' permissions if they are not allowed to modify
-        # others' permissions
-        filtered_user_ids = [affected_object.owner_id,
-                             user.pk,
-                             settings.ANONYMOUS_USER_ID]
+        visible_user_ids = {affected_object.owner_id}
+    else:
+        user_pk = user.pk
+        user_has_manage = user_is_org_admin or any(
+            p['user_id'] == user_pk and p['permission__codename'] == PERM_MANAGE_ASSET
+            for p in object_permission_assignments
+        )
+        if user_has_manage:
+            return list(object_permission_assignments)
+        visible_user_ids = {
+            affected_object.owner_id,
+            user_pk,
+            settings.ANONYMOUS_USER_ID,
+        }
 
-    for permission_assignment in object_permission_assignments:
-        if (filtered_user_ids is None or
-                permission_assignment.user_id in filtered_user_ids):
-            user_permission_assignments.append(permission_assignment)
-
-    return user_permission_assignments
+    return [
+        p for p in object_permission_assignments if p['user_id'] in visible_user_ids
+    ]
 
 
 def get_user_permission_assignments_queryset(affected_object, user):
@@ -236,14 +259,20 @@ def get_user_permission_assignments_queryset(affected_object, user):
 
     """
 
+    # Import here to avoid circular import of `get_database_user()`, which
+    # could be moved elsewhere like `kpi.utils.permissions`, eventually. Avoid
+    # such refactoring now while large work like #4888 remains in progress.
+    from kpi.utils.project_views import user_has_project_view_asset_perm
+
     # `affected_object.permissions` is a `GenericRelation(ObjectPermission)`
     # Don't Prefetch `content_object`.
     # See `AssetPermissionAssignmentSerializer.to_representation()`
-    queryset = affected_object.permissions.filter(deny=False).select_related(
-        'permission', 'user'
-    ).order_by(
-        'user__username', 'permission__codename'
-    ).exclude(permission__codename=PERM_FROM_KC_ONLY).all()
+    queryset = (
+        affected_object.permissions.filter(deny=False, user__is_active=True)
+        .select_related('permission', 'user')
+        .order_by('user__username', 'permission__codename')
+        .all()
+    )
 
     # Filtering is done in `get_queryset` instead of FilteredBackend class
     # because it's specific to `ObjectPermission`.
@@ -254,12 +283,21 @@ def get_user_permission_assignments_queryset(affected_object, user):
                 settings.ANONYMOUS_USER_ID,
             ]
         )
-    elif not affected_object.has_perm(user, PERM_MANAGE_ASSET):
-        # Display only users' permissions if they are not allowed to modify
-        # others' permissions
-        queryset = queryset.filter(user_id__in=[user.pk,
-                                                affected_object.owner_id,
-                                                settings.ANONYMOUS_USER_ID])
+    # Users granted the `view_asset` permission via the Project Views feature
+    # may list all permission assignments, but other users may only view a
+    # subset of non-sensitive assignments
+    elif not affected_object.has_perm(
+        user, PERM_MANAGE_ASSET
+    ) and not user_has_project_view_asset_perm(
+        affected_object, user, PERM_VIEW_ASSET
+    ):
+        queryset = queryset.filter(
+            user_id__in=[
+                user.pk,
+                affected_object.owner_id,
+                settings.ANONYMOUS_USER_ID,
+            ]
+        )
 
     return queryset
 
@@ -281,3 +319,9 @@ def perm_parse(perm, obj=None):
         app_label = obj_app_label
         codename = perm
     return app_label, codename
+
+
+post_assign_perm = django.dispatch.Signal()
+post_remove_perm = django.dispatch.Signal()
+post_assign_partial_perm = django.dispatch.Signal()
+post_remove_partial_perms = django.dispatch.Signal()

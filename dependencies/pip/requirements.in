@@ -2,28 +2,25 @@
 # https://github.com/bndr/pipreqs is a handy utility, too.
 
 # formpack
--e git+https://github.com/kobotoolbox/formpack.git@43daf1d1bd9ffecaeb0e66f8ffb5a957a6e9b9e2#egg=formpack
-
-# service-account
--e git+https://github.com/kobotoolbox/kobo-service-account.git@871762cdd099ed543d36f0a29bfbff1de4766a8b#egg=kobo-service-account
+git+https://github.com/kobotoolbox/formpack.git@e43428525a77d2957141a54f8b1dd4675ec8a290#egg=formpack
 
 # More up-to-date version of django-digest than PyPI seems to have.
 # Also, python-digest is an unlisted dependency thereof.
--e git+https://github.com/dimagi/python-digest@5c94bb74516b977b60180ee832765c0695ff2b56#egg=python_digest
--e git+https://github.com/dimagi/django-digest@419f7306443f9a800b07d832b2cc147941062d59#egg=django_digest
+git+https://github.com/dimagi/python-digest@5c94bb74516b977b60180ee832765c0695ff2b56#egg=python_digest
+git+https://github.com/kobotoolbox/django-digest@3995226ed8e5bd1cb32c640aae970f8c104f6156#egg=django_digest
 
 # ssrf protect
--e git+https://github.com/kobotoolbox/ssrf-protect@9b97d3f0fd8f737a38dd7a6b64efeffc03ab3cdd#egg=ssrf_protect
+git+https://github.com/kobotoolbox/ssrf-protect@9b97d3f0fd8f737a38dd7a6b64efeffc03ab3cdd#egg=ssrf_protect
+
+# django-dont-vary-on
+# using a fork for django > 1.1.0 compatibility
+git+https://github.com/trevoriancox/django-dont-vary-on.git@01a804122b7ddcdc22f50b40993f91c27b03bef6#egg=django-dont-vary-on
 
 # OC - Keycloak authentication integration
-mozilla-django-oidc # requirement of boss-oidc2
-drf-oidc-auth # requirement of boss-oidc2
--e git+https://github.com/gushil/boss-oidc2.git@6b7fd20a0ea72444b79e128f1dcadd90932ed90c#egg=boss-oidc2
--e git+https://github.com/gushil/django-oidc.git@1fbbe169e785bab04cd9da5410245c97a18f3e38#egg=django-oidc
--e git+https://github.com/gushil/python-keycloak-client.git@549c90f615fc2327bd47819290dd9c0d5c6de680#egg=python-keycloak-client
+python-keycloak>=4.0.0
 
 # Regular PyPI packages
-Django>=3.2,<3.3
+Django>=4.2,<4.3
 Markdown
 Pygments
 amqp
@@ -32,21 +29,25 @@ beautifulsoup4
 celery
 celery[redis]
 dict2xml
+defusedxml
 dj-static
 dj-stripe
-django-allauth
+django-allauth>=65.11.2
+django-allauth[mfa]
 django-braces
 django-celery-beat
-django-constance[database]
+django-constance<4  # temporary 20260226
 django-cors-headers
-django-csp
-django-debug-toolbar
+django-csp<4  # temporary 20260226
+django-debug-toolbar<5  # temporary 20260226
 django-environ
-django-filter
-django-extensions
-django-oauth-toolkit
+django-filter<25  # temporary 20260226
+django-import-export
+django-import-export-celery
+django-extensions<4  # temporary 20260226
+django-oauth-toolkit<3  # temporary 20260226
 django-organizations
-django-redis
+django-redis<6  # temporary 20260226
 django-storages[azure,boto3]
 django-amazon-ses
 django-webpack-loader
@@ -54,11 +55,8 @@ django-loginas
 django-markdownx
 django-prometheus
 
-django-markitup
-django-mptt
-
-django-reversion
-django-taggit
+django-reversion<6  # temporary 20260226
+django-taggit<6  # temporary 20260226
 django-private-storage
 djangorestframework
 djangorestframework-xml
@@ -70,46 +68,59 @@ future
 geojson-rewind
 google-api-python-client
 google-cloud-speech
-google-cloud-storage
+google-cloud-storage<3  # temporary 20260226
 google-cloud-translate
 jsonfield
 jsonschema
 kombu
-lxml
+lxml<6  # temporary 20260226
+more-itertools
 oauthlib
+objgraph
 openpyxl
 #py-gfm # Incompatible with markdown 3.x
-psycopg2
-pymongo==3.12.3
+pillow-heif<1  # temporary 20260226
+psycopg
+pymongo<4.11.0  # for compatibility with unmaintained mongomock; see https://github.com/mongomock/mongomock/issues/912
 python-dateutil
--e git+https://github.com/OpenClinica/pyxform.git#egg=pyxform
+git+https://github.com/OpenClinica/pyxform.git#egg=pyxform
+psutil
 requests
+regex
 responses
 shortuuid
 sqlparse
 static3
 tabulate
 tldextract
+ua-parser<1  # temporary 20260226
 uWSGI
-Werkzeug<=2.0.3
+Werkzeug
 xlrd
 xlwt
 xlutils
 XlsxWriter
 
 # These packages allow `requests` to support SNI
-pyopenssl
+pyopenssl<25  # temporary 20260226
 ndg-httpsclient
 pyasn1
 
 # This package is only needed for unit tests but MockBackend is loaded even on production environment
-deepmerge
+deepmerge<2  # temporary 20260226
 
 # MFA
 django-trench
 
 # Sentry
-sentry-sdk
+sentry-sdk<2  # temporary 20260226
 
-# Python 3.8 support
-backports.zoneinfo; python_version < '3.9'
+# Kobocat
+django-guardian<3  # temporary 20260226
+modilabs-python-utils
+djangorestframework-csv
+djangorestframework-jsonp
+pandas<3  # temporary 20260226
+
+# Api Documentation
+drf-spectacular

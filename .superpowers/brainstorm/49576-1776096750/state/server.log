@@ -1,0 +1,13 @@
+{"type":"server-started","port":51372,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:51372","screen_dir":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content","state_dir":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/state"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/side-panel-layout.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/side-panel-v2.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/edit-logic-buttons.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/combined-entry-points.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/combined-entry-points-v2.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/bmi-conditional-calc.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/bmi-guarded-calc.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/clause-edit-interaction.html"}
+{"type":"screen-added","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/logic-builder-flow.html"}
+{"type":"screen-updated","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/logic-builder-flow.html"}
+{"type":"screen-updated","file":"/Users/shivavadla/dev/kpi/.superpowers/brainstorm/49576-1776096750/content/logic-builder-flow.html"}
+{"type":"server-stopped","reason":"idle timeout"}

@@ -3,10 +3,10 @@
 import json
 import unittest
 
-from django.contrib.auth.models import User
 from django.urls import reverse
 from rest_framework import status
 
+from kobo.apps.kobo_auth.shortcuts import User
 from kpi.constants import ASSET_TYPE_ARG_NAME, ASSET_TYPE_SURVEY, \
     ASSET_TYPE_TEMPLATE, ASSET_TYPE_BLOCK, ASSET_TYPE_QUESTION
 from kpi.exceptions import BadAssetTypeException
@@ -219,9 +219,9 @@ class TestCloning(KpiTestCase):
 
         if partial_update:
             status_code = status.HTTP_200_OK
-            uid = kwargs.pop("uid", None)
+            uid = kwargs.pop('uid', None)
             action = self.client.patch
-            endpoint = reverse("asset-detail", kwargs={"uid": uid})
+            endpoint = reverse('asset-detail', kwargs={'uid_asset': uid})
 
         expected_status_code = kwargs.pop('expected_status_code',
                                           status_code)
@@ -256,7 +256,7 @@ class TestCloning(KpiTestCase):
         original_asset = self.create_asset('cloning_asset')
         parent_collection = self.create_collection('parent_collection')
         parent_url = reverse(
-            'asset-detail', kwargs={'uid': parent_collection.uid})
+            'asset-detail', kwargs={'uid_asset': parent_collection.uid})
         cloned_asset = self._clone_asset(
             original_asset, parent=parent_url)
         self.assertEqual(cloned_asset.parent, parent_collection)

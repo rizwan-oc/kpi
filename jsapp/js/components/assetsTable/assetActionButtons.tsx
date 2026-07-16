@@ -5,102 +5,105 @@
  * - project landing page (see: https://github.com/kobotoolbox/kpi/issues/2758)
  * - projects listing row (see: https://github.com/kobotoolbox/kpi/issues/2758)
  */
+import './assetActionButtons.scss'
 
-import React from 'react';
-import autoBind from 'react-autobind';
-import _ from 'lodash';
-import PopoverMenu from 'js/popoverMenu';
-import bem, {makeBem} from 'js/bem';
-import {actions} from 'js/actions';
-import assetUtils from 'js/assetUtils';
-import {ASSET_TYPES, ACCESS_TYPES} from 'js/constants';
-import {ROUTES} from 'js/router/routerConstants';
-import mixins from 'js/mixins';
-import type {AssetResponse, AssetDownloads} from 'js/dataInterface';
+import React from 'react'
+
+import debounce from 'lodash.debounce'
+import autoBind from 'react-autobind'
+import { Link } from 'react-router-dom'
+import { actions } from '#/actions'
 import {
-  isAnyLibraryItemRoute,
-  getRouteAssetUid,
-  isAnyFormRoute,
-} from 'js/router/routerUtils';
-import ownedCollectionsStore from 'js/components/library/ownedCollectionsStore';
-import type {OwnedCollectionsStoreData} from 'js/components/library/ownedCollectionsStore';
-import './assetActionButtons.scss';
-import {withRouter} from 'jsapp/js/router/legacy';
-import type {WithRouterProps} from 'jsapp/js/router/legacy';
-import {userCan} from 'js/components/permissions/utils';
-
-bem.AssetActionButtons = makeBem(null, 'asset-action-buttons', 'menu');
-bem.AssetActionButtons__button = makeBem(bem.AssetActionButtons, 'button', 'a');
-bem.AssetActionButtons__iconButton = makeBem(
-  bem.AssetActionButtons,
-  'icon-button',
-  'a'
-);
-
-const assetActions = mixins.clickAssets.click.asset;
+  archiveAsset,
+  cloneAsset,
+  cloneAssetAsSurvey,
+  cloneAssetAsTemplate,
+  deleteAsset,
+  manageAssetLanguages,
+  manageAssetSettings,
+  manageAssetSharing,
+  modifyAssetTags,
+  replaceAssetForm,
+  unarchiveAsset,
+} from '#/assetQuickActions'
+import assetUtils from '#/assetUtils'
+import bem from '#/bem'
+import Button from '#/components/common/button'
+import type { ButtonType } from '#/components/common/button'
+import managedCollectionsStore from '#/components/library/managedCollectionsStore'
+import type { ManagedCollectionsStoreData } from '#/components/library/managedCollectionsStore'
+import subdomainCollectionsStore from '#/components/library/subdomainCollectionsStore'
+import type { SubdomainCollectionsStoreData } from '#/components/library/subdomainCollectionsStore'
+import { userCan } from '#/components/permissions/utils'
+import { ACCESS_TYPES, ASSET_TYPES } from '#/constants'
+import type { AssetDownloads, AssetResponse } from '#/dataInterface'
+import type { IconName } from '#/k-icons'
+import mixins from '#/mixins'
+import PopoverMenu from '#/popoverMenu'
+import { withRouter } from '#/router/legacy'
+import type { WithRouterProps } from '#/router/legacy'
+import { ROUTES } from '#/router/routerConstants'
+import { getRouteAssetUid, isAnyFormRoute, isAnyLibraryItemRoute } from '#/router/routerUtils'
 
 interface AssetActionButtonsProps extends WithRouterProps {
-  asset: AssetResponse;
-  has_deployment?: boolean;
-  deployment__active?: boolean;
+  asset: AssetResponse
+  has_deployment?: boolean
+  deployment__active?: boolean
 }
 
 interface AssetActionButtonsState {
-  ownedCollections: AssetResponse[];
-  shouldHidePopover: boolean;
-  isPopoverVisible: boolean;
-  isSubscribePending: boolean;
+  managedCollections: AssetResponse[]
+  ownedCollections: AssetResponse[]
+  shouldHidePopover: boolean
+  isPopoverVisible: boolean
+  isSubscribePending: boolean
 }
 
-class AssetActionButtons extends React.Component<
-  AssetActionButtonsProps,
-  AssetActionButtonsState
-> {
-  private unlisteners: Function[] = [];
-  hidePopoverDebounced = _.debounce(() => {
+class AssetActionButtons extends React.Component<AssetActionButtonsProps, AssetActionButtonsState> {
+  private unlisteners: Function[] = []
+  hidePopoverDebounced = debounce(() => {
     if (this.state.isPopoverVisible) {
-      this.setState({shouldHidePopover: true});
+      this.setState({ shouldHidePopover: true })
     }
-  }, 500);
+  }, 500)
 
   constructor(props: AssetActionButtonsProps) {
-    super(props);
+    super(props)
     this.state = {
-      ownedCollections: ownedCollectionsStore.data.collections,
+      managedCollections: managedCollectionsStore.data.collections,
+      ownedCollections: subdomainCollectionsStore.data.collections,
       shouldHidePopover: false,
       isPopoverVisible: false,
       isSubscribePending: false,
-    };
-    autoBind(this);
+    }
+    autoBind(this)
   }
 
   componentDidMount() {
-    ownedCollectionsStore.listen(
-      this.onOwnedCollectionsStoreChanged.bind(this),
-      this
-    );
+    managedCollectionsStore.listen(this.onManagedCollectionsStoreChanged.bind(this), this)
+    subdomainCollectionsStore.listen(this.onOwnedCollectionsStoreChanged.bind(this), this)
     this.unlisteners.push(
-      actions.library.subscribeToCollection.completed.listen(
-        this.onSubscribingCompleted.bind(this)
-      ),
-      actions.library.unsubscribeFromCollection.completed.listen(
-        this.onSubscribingCompleted.bind(this)
-      )
-    );
+      actions.library.subscribeToCollection.completed.listen(this.onSubscribingCompleted.bind(this)),
+      actions.library.unsubscribeFromCollection.completed.listen(this.onSubscribingCompleted.bind(this)),
+    )
   }
 
   componentWillUnmount() {
     this.unlisteners.forEach((clb) => {
-      clb();
-    });
+      clb()
+    })
   }
 
   onSubscribingCompleted() {
-    this.setState({isSubscribePending: false});
+    this.setState({ isSubscribePending: false })
   }
 
-  onOwnedCollectionsStoreChanged(storeData: OwnedCollectionsStoreData) {
-    this.setState({ownedCollections: storeData.collections});
+  onManagedCollectionsStoreChanged(storeData: ManagedCollectionsStoreData) {
+    this.setState({ managedCollections: storeData.collections })
+  }
+
+  onOwnedCollectionsStoreChanged(storeData: SubdomainCollectionsStoreData) {
+    this.setState({ ownedCollections: storeData.collections })
   }
 
   // methods for inner workings of component
@@ -111,157 +114,153 @@ class AssetActionButtons extends React.Component<
    * handles it this way)
    */
   onMouseLeave() {
-    this.hidePopoverDebounced();
+    this.hidePopoverDebounced()
   }
 
   onMouseEnter() {
-    this.hidePopoverDebounced.cancel();
+    this.hidePopoverDebounced.cancel()
   }
 
   onPopoverSetVisible() {
-    this.setState({isPopoverVisible: true});
+    this.setState({ isPopoverVisible: true })
   }
 
   // Methods for managing the asset
 
   modifyDetails() {
-    assetUtils.modifyDetails(this.props.asset);
+    manageAssetSettings(this.props.asset)
   }
 
   editLanguages() {
-    assetUtils.editLanguages(this.props.asset);
+    manageAssetLanguages(this.props.asset)
   }
 
   share() {
-    assetUtils.share(this.props.asset);
+    manageAssetSharing(this.props.asset.uid)
   }
 
   showTagsModal() {
-    assetUtils.editTags(this.props.asset);
+    modifyAssetTags(this.props.asset)
   }
 
   replace() {
-    assetUtils.replaceForm(this.props.asset);
+    replaceAssetForm(this.props.asset)
   }
 
   delete() {
-    assetActions.delete(
+    deleteAsset(
       this.props.asset,
       assetUtils.getAssetDisplayName(this.props.asset).final,
-      this.onDeleteComplete.bind(this, this.props.asset.uid)
-    );
+      this.onDeleteComplete.bind(this, this.props.asset.uid),
+    )
   }
 
   /**
-   * Navigates out of nonexistent paths after asset was successfuly deleted
+   * Navigates out of nonexistent paths after asset was successfully deleted
    */
   onDeleteComplete(assetUid: string) {
     if (isAnyLibraryItemRoute() && getRouteAssetUid() === assetUid) {
-      this.props.router.navigate(ROUTES.LIBRARY);
+      this.props.router.navigate(ROUTES.LIBRARY)
     }
     if (isAnyFormRoute() && getRouteAssetUid() === assetUid) {
-      this.props.router.navigate(ROUTES.FORMS);
+      this.props.router.navigate(ROUTES.FORMS)
     }
   }
 
   deploy() {
-    mixins.dmix.deployAsset(this.props.asset);
+    mixins.dmix.deployAsset(this.props.asset)
   }
 
   archive() {
-    assetActions.archive(this.props.asset);
+    archiveAsset(this.props.asset)
   }
 
   unarchive() {
-    assetActions.unarchive(this.props.asset);
+    unarchiveAsset(this.props.asset)
   }
 
   clone() {
-    assetActions.clone(this.props.asset);
+    cloneAsset(this.props.asset)
   }
 
   cloneAsSurvey() {
-    assetActions.cloneAsSurvey(
-      this.props.asset.uid,
-      assetUtils.getAssetDisplayName(this.props.asset).final
-    );
+    cloneAssetAsSurvey(this.props.asset.uid, assetUtils.getAssetDisplayName(this.props.asset).final)
   }
 
   cloneAsTemplate() {
-    assetActions.cloneAsTemplate(
-      this.props.asset.uid,
-      assetUtils.getAssetDisplayName(this.props.asset).final
-    );
+    cloneAssetAsTemplate(this.props.asset.uid, assetUtils.getAssetDisplayName(this.props.asset).final)
   }
 
   /** Pass `null` to remove from collection. */
   moveToCollection(collectionUrl: string | null) {
-    actions.library.moveToCollection(this.props.asset.uid, collectionUrl);
+    actions.library.moveToCollection(this.props.asset.uid, collectionUrl)
   }
 
   subscribeToCollection() {
-    this.setState({isSubscribePending: true});
-    actions.library.subscribeToCollection(this.props.asset.url);
+    this.setState({ isSubscribePending: true })
+    actions.library.subscribeToCollection(this.props.asset.url)
   }
 
   unsubscribeFromCollection() {
-    this.setState({isSubscribePending: true});
-    actions.library.unsubscribeFromCollection(this.props.asset.uid);
+    this.setState({ isSubscribePending: true })
+    actions.library.unsubscribeFromCollection(this.props.asset.uid)
   }
 
   viewContainingCollection() {
     if (this.props.asset.parent === null) {
-      return;
+      return
     }
-    const parentArr = this.props.asset.parent.split('/');
-    const parentAssetUid = parentArr[parentArr.length - 2];
-    this.props.router.navigate(
-      ROUTES.LIBRARY_ITEM.replace(':uid', parentAssetUid)
-    );
+    const parentArr = this.props.asset.parent.split('/')
+    const parentAssetUid = parentArr[parentArr.length - 2]
+    this.props.router.navigate(ROUTES.LIBRARY_ITEM.replace(':uid', parentAssetUid))
   }
 
   getFormBuilderLink() {
-    let link =
-      '#' + ROUTES.EDIT_LIBRARY_ITEM.replace(':uid', this.props.asset.uid);
+    let link = ROUTES.EDIT_LIBRARY_ITEM.replace(':uid', this.props.asset.uid)
 
     // when editing a child from within a collection page
     // make sure the "Return to list" button goes back to collection
-    const currentAssetUid = getRouteAssetUid();
+    const currentAssetUid = getRouteAssetUid()
     if (
       this.props.asset.asset_type !== ASSET_TYPES.collection.id &&
       this.props.asset.parent !== null &&
       currentAssetUid !== null &&
       this.props.asset.parent.includes(currentAssetUid)
     ) {
-      const backPath = ROUTES.LIBRARY_ITEM.replace(':uid', currentAssetUid);
-      link += `?back=${backPath}`;
+      const backPath = ROUTES.LIBRARY_ITEM.replace(':uid', currentAssetUid)
+      link += `?back=${backPath}`
     }
 
-    return link;
+    return link
   }
 
   renderMoreActionsTrigger() {
-    return (
-      <div className='right-tooltip' data-tip={t('More actions')}>
-        <i className='k-icon k-icon-more' />
-      </div>
-    );
+    const assetType = this.props.asset.asset_type
+    const userCanDelete = userCan('delete_submissions', this.props.asset)
+
+    if (assetType === ASSET_TYPES.collection.id && !userCanDelete) {
+      return null
+    }
+
+    return <Button type='text' size='m' tooltip={t('More actions')} tooltipPosition='right' startIcon='more' />
   }
 
   renderMoreActions() {
-    const assetType = this.props.asset.asset_type;
-    let downloads: AssetDownloads = [];
+    const assetType = this.props.asset.asset_type
+    let downloads: AssetDownloads = []
     if (assetType !== ASSET_TYPES.collection.id) {
-      downloads = this.props.asset.downloads;
+      // OpenClinica fork: only offer XLS download for library assets (drop XML/other formats).
+      downloads = this.props.asset.downloads.filter((dl) => dl.format !== 'xml')
     }
-    const userCanEdit = userCan('change_asset', this.props.asset);
-    const isDeployable =
-      assetType === ASSET_TYPES.survey.id &&
-      this.props.asset.deployed_version_id === null;
+    // OpenClinica fork: bypass kobo per-asset edit permission (was `userWithSameSubdomainAsAssetOwner`); OC gates access at the SSO/route layer.
+    // const userCanEdit = userCan('change_asset', this.props.asset)
+    const userCanEdit = true
+    const userCanDelete = userCan('delete_submissions', this.props.asset)
+    const isDeployable = assetType === ASSET_TYPES.survey.id && this.props.asset.deployed_version_id === null
 
     // avoid rendering empty menu
     if (!userCanEdit && downloads.length === 0) {
-      return null;
+      return null
     }
 
     return (
@@ -309,9 +308,7 @@ class AssetActionButtons extends React.Component<
           assetType !== ASSET_TYPES.survey.id &&
           assetType !== ASSET_TYPES.collection.id &&
           this.props.asset.parent !== null && (
-            <bem.PopoverMenu__link
-              onClick={this.moveToCollection.bind(this, null)}
-            >
+            <bem.PopoverMenu__link onClick={this.moveToCollection.bind(this, null)}>
               <i className='k-icon k-icon-folder-out' />
               {t('Remove from collection')}
             </bem.PopoverMenu__link>
@@ -320,20 +317,16 @@ class AssetActionButtons extends React.Component<
         {userCanEdit &&
           assetType !== ASSET_TYPES.survey.id &&
           assetType !== ASSET_TYPES.collection.id &&
-          this.state.ownedCollections.length > 0 && [
-            <bem.PopoverMenu__heading key='heading'>
-              {t('Move to')}
-            </bem.PopoverMenu__heading>,
+          this.state.managedCollections.length > 0 && [
+            <bem.PopoverMenu__heading key='heading'>{t('Move to')}</bem.PopoverMenu__heading>,
             <bem.PopoverMenu__moveTo key='list'>
-              {this.state.ownedCollections.map((collection) => {
-                const modifiers = ['move-coll-item'];
-                const isAssetParent =
-                  collection.url === this.props.asset.parent;
+              {this.state.managedCollections.map((collection) => {
+                const modifiers = ['move-coll-item']
+                const isAssetParent = collection.url === this.props.asset.parent
                 if (isAssetParent) {
-                  modifiers.push('move-coll-item-parent');
+                  modifiers.push('move-coll-item-parent')
                 }
-                const displayName =
-                  assetUtils.getAssetDisplayName(collection).final;
+                const displayName = assetUtils.getAssetDisplayName(collection).final
                 return (
                   <bem.PopoverMenu__item
                     onClick={this.moveToCollection.bind(this, collection.url)}
@@ -342,12 +335,10 @@ class AssetActionButtons extends React.Component<
                     m={modifiers}
                   >
                     {isAssetParent && <i className='k-icon k-icon-check' />}
-                    {!isAssetParent && (
-                      <i className='k-icon k-icon-folder-in' />
-                    )}
+                    {!isAssetParent && <i className='k-icon k-icon-folder-in' />}
                     {displayName}
                   </bem.PopoverMenu__item>
-                );
+                )
               })}
             </bem.PopoverMenu__moveTo>,
           ]}
@@ -372,159 +363,172 @@ class AssetActionButtons extends React.Component<
             </bem.PopoverMenu__link>
           )} */}
 
-        {/* {userCanEdit && (
-          <bem.PopoverMenu__link onClick={this.delete}>
+        {/* {userCanEdit && userCanDelete && (
+          <bem.PopoverMenu__link onClick={this.delete} m='red'>
             <i className='k-icon k-icon-trash' />
             {t('Delete')}
           </bem.PopoverMenu__link>
         )} */}
       </PopoverMenu>
-    );
+    )
   }
 
   renderSubButton() {
-    const isSelfOwned = assetUtils.isSelfOwned(this.props.asset);
-    const isPublic = assetUtils.isAssetPublic(this.props.asset.permissions);
+    const isSelfOwned = assetUtils.isSelfOwned(this.props.asset)
+    const isPublic = assetUtils.isAssetPublic(this.props.asset.permissions)
     const isUserSubscribed =
-      this.props.asset.access_types &&
-      this.props.asset.access_types.includes(ACCESS_TYPES.subscribed);
+      this.props.asset.access_types && this.props.asset.access_types.includes(ACCESS_TYPES.subscribed)
 
-    if (
-      !isSelfOwned &&
-      isPublic &&
-      this.props.asset.asset_type === ASSET_TYPES.collection.id
-    ) {
-      const modifiers = isUserSubscribed ? ['off'] : ['on'];
-      const fn = isUserSubscribed
-        ? this.unsubscribeFromCollection.bind(this)
-        : this.subscribeToCollection.bind(this);
-      if (this.state.isSubscribePending) {
-        modifiers.push('pending');
-      }
-      let icon = null;
-      let title = t('Pending…');
-      if (!this.state.isSubscribePending) {
-        if (isUserSubscribed) {
-          icon = <i className='k-icon k-icon-close' />;
-          title = t('Unsubscribe');
-        } else {
-          icon = <i className='k-icon k-icon-subscribe' />;
-          title = t('Subscribe');
-        }
+    if (!isSelfOwned && isPublic && this.props.asset.asset_type === ASSET_TYPES.collection.id) {
+      let type: ButtonType = 'secondary'
+      let callbackFunction = this.subscribeToCollection.bind(this)
+      let icon: IconName = 'subscribe'
+      let label = t('Subscribe')
+
+      if (isUserSubscribed) {
+        type = 'secondary-danger'
+        callbackFunction = this.unsubscribeFromCollection.bind(this)
+        icon = 'close'
+        label = t('Unsubscribe')
       }
 
       return (
-        <bem.AssetActionButtons__button
-          m={modifiers}
-          onClick={fn}
-          disabled={this.state.isSubscribePending}
-        >
-          {icon}
-          {title}
-        </bem.AssetActionButtons__button>
-      );
+        <Button
+          type={type}
+          size='m'
+          onClick={callbackFunction}
+          startIcon={icon}
+          label={label}
+          isPending={this.state.isSubscribePending}
+        />
+      )
     }
 
-    return null;
+    return null
   }
 
   render() {
     if (!this.props.asset) {
-      return null;
+      return null
     }
 
-    const assetType = this.props.asset.asset_type;
-    const userCanEdit = userCan('change_asset', this.props.asset);
-    const hasDetailsEditable =
-      assetType === ASSET_TYPES.template.id ||
-      assetType === ASSET_TYPES.collection.id;
-    const isCollection = assetType === ASSET_TYPES.collection.id;
-
-    const routeAssetUid = getRouteAssetUid();
+    const assetType = this.props.asset.asset_type
+    // OpenClinica fork: bypass kobo per-asset edit permission.
+    const userCanEdit = true
+    const hasDetailsEditable = assetType === ASSET_TYPES.template.id || assetType === ASSET_TYPES.collection.id
+    const isCollection = assetType === ASSET_TYPES.collection.id
+    const downloads = isCollection ? [] : this.props.asset.downloads.filter((dl) => dl.format !== 'xml')
 
     return (
-      <bem.AssetActionButtons
-        onMouseLeave={this.onMouseLeave}
-        onMouseEnter={this.onMouseEnter}
-      >
-        {/* {this.renderSubButton()} */}
-
-        {/* {userCanEdit && assetType !== ASSET_TYPES.collection.id && (
-          <bem.AssetActionButtons__iconButton
-            href={this.getFormBuilderLink()}
-            data-tip={t('Edit in Form Builder')}
-            className='right-tooltip'
-          >
-            <i className='k-icon k-icon-edit' />
-          </bem.AssetActionButtons__iconButton>
-        )} */}
-
-        {userCanEdit && hasDetailsEditable && isCollection && (
-          <bem.AssetActionButtons__iconButton
-            onClick={this.modifyDetails}
-            data-tip={t('Rename Collection')}
-            className='right-tooltip'
-          >
-            <i className='k-icon k-icon-settings' />
-          </bem.AssetActionButtons__iconButton>
+      <menu className='asset-action-buttons'>
+        {userCanEdit && !isCollection && (
+          <Link to={this.getFormBuilderLink()}>
+            <Button type='text' size='m' tooltip={t('Edit')} tooltipPosition='right' startIcon='edit' />
+          </Link>
         )}
 
-        {/* {userCanEdit && (
-          <bem.AssetActionButtons__iconButton
-            onClick={this.showTagsModal}
-            data-tip={t('Edit Tags')}
-            className='right-tooltip'
+        {userCanEdit && hasDetailsEditable && isCollection && (
+          <Button
+            type='text'
+            size='m'
+            onClick={this.modifyDetails.bind(this)}
+            tooltip={t('Rename Collection')}
+            tooltipPosition='right'
+            startIcon='settings'
+          />
+        )}
+
+        {userCanEdit && !isCollection && (
+          <Button
+            type='text'
+            size='m'
+            onClick={this.showTagsModal.bind(this)}
+            tooltip={t('Labels')}
+            tooltipPosition='right'
+            startIcon='tag'
+          />
+        )}
+
+        {!isCollection && (
+          <Button
+            type='text'
+            size='m'
+            onClick={this.clone.bind(this)}
+            tooltip={t('Clone')}
+            tooltipPosition='right'
+            startIcon='duplicate'
+          />
+        )}
+
+        {downloads.map((dl) => (
+          <a href={dl.url} key={`dl-${dl.format}`}>
+            <Button
+              type='text'
+              size='m'
+              tooltip={`${t('Download')} ${dl.format.toString().toUpperCase()}`}
+              tooltipPosition='right'
+              startIcon={`file-${dl.format}` as IconName}
+            />
+          </a>
+        ))}
+
+        {!isCollection && (
+          <PopoverMenu
+            triggerLabel={
+              <div className='right-tooltip' data-tip={t('Manage collection')}>
+                <i className='k-icon k-icon-folder' />
+              </div>
+            }
           >
-            <i className='k-icon k-icon-tag' />
-          </bem.AssetActionButtons__iconButton>
-        )} */}
+            {assetType !== ASSET_TYPES.survey.id && this.props.asset.parent !== null && (
+              <bem.PopoverMenu__link onClick={this.moveToCollection.bind(this, null)}>
+                <i className='k-icon k-icon-folder-out' />
+                {t('Remove from collection')}
+              </bem.PopoverMenu__link>
+            )}
 
-        {/* {userCanEdit && !isCollection && (
-          <bem.AssetActionButtons__iconButton
-            onClick={this.share}
-            data-tip={t('Share')}
-            className='right-tooltip'
-          >
-            <i className='k-icon k-icon-user-share' />
-          </bem.AssetActionButtons__iconButton>
-        )} */}
+            {assetType !== ASSET_TYPES.survey.id &&
+              this.state.ownedCollections.length > 0 && [
+                <bem.PopoverMenu__heading key='heading'>{t('Move to')}</bem.PopoverMenu__heading>,
+                <bem.PopoverMenu__moveTo key='list'>
+                  {this.state.ownedCollections.map((collection) => {
+                    const modifiers = ['move-coll-item']
+                    const isAssetParent = collection.url === this.props.asset.parent
+                    if (isAssetParent) {
+                      modifiers.push('move-coll-item-parent')
+                    }
+                    const displayName = assetUtils.getAssetDisplayName(collection).final
+                    return (
+                      <bem.PopoverMenu__item
+                        onClick={this.moveToCollection.bind(this, collection.url)}
+                        key={collection.uid}
+                        title={displayName}
+                        m={modifiers}
+                      >
+                        {isAssetParent && <i className='k-icon k-icon-check' />}
+                        {!isAssetParent && <i className='k-icon k-icon-folder-in' />}
+                        {displayName}
+                      </bem.PopoverMenu__item>
+                    )
+                  })}
+                </bem.PopoverMenu__moveTo>,
+              ]}
+          </PopoverMenu>
+        )}
 
-        {/* {assetType !== ASSET_TYPES.collection.id && (
-          <bem.AssetActionButtons__iconButton
-            onClick={this.clone}
-            data-tip={t('Clone')}
-            className='right-tooltip'
-          >
-            <i className='k-icon k-icon-duplicate' />
-          </bem.AssetActionButtons__iconButton>
-        )} */}
-
-        {/* {assetType === ASSET_TYPES.template.id && (
-          <bem.AssetActionButtons__iconButton
-            onClick={this.cloneAsSurvey}
-            data-tip={t('Create project')}
-            className='right-tooltip'
-          >
-            <i className='k-icon k-icon-projects' />
-          </bem.AssetActionButtons__iconButton>
-        )} */}
-
-        {/* {routeAssetUid &&
-          this.props.asset.parent !== null &&
-          !this.props.asset.parent.includes(routeAssetUid) && (
-            <bem.AssetActionButtons__iconButton
-              onClick={this.viewContainingCollection}
-              data-tip={t('View containing Collection')}
-              className='right-tooltip'
-            >
-              <i className='k-icon k-icon-folder' />
-            </bem.AssetActionButtons__iconButton>
-          )} */}
-
-        {!isCollection && this.renderMoreActions()}
-      </bem.AssetActionButtons>
-    );
+        {userCanEdit && !isCollection && (
+          <Button
+            type='text'
+            size='m'
+            onClick={this.delete.bind(this)}
+            tooltip={t('Delete')}
+            tooltipPosition='right'
+            startIcon='trash'
+          />
+        )}
+      </menu>
+    )
   }
 }
 
-export default withRouter(AssetActionButtons);
+export default withRouter(AssetActionButtons)

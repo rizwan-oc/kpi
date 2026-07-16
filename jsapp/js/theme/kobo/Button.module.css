@@ -1,0 +1,41 @@
+@use 'js/components/common/icon';
+
+.root {
+  font-weight: 500;
+
+  &[data-size='sm'] {
+    min-width: 28px;
+  }
+
+  &[data-size='md'] {
+    min-width: 32px;
+  }
+
+  &[data-size='lg'] {
+    min-width: 38px;
+  }
+
+  &[data-disabled] {
+    color: var(--button-color);
+    background: var(--button-bg);
+    opacity: 0.5;
+    border: none;
+  }
+
+  &[data-variant='outline'] {
+    &:active {
+      background-color: transparent;
+      border-color: var(--mantine-color-gray-5);
+    }
+  }
+}
+
+.section {
+  &[data-position='left'] {
+    margin-inline-end: calc(var(--button-height) * 0.2);
+  }
+
+  &[data-position='right'] {
+    margin-inline-start: calc(var(--button-height) * 0.2);
+  }
+}

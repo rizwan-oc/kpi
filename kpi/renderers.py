@@ -1,30 +1,132 @@
-# coding: utf-8
 import json
+import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Iterator
 from io import StringIO
-
+from typing import Any
 
 from dict2xml import dict2xml
+from django.core.serializers.json import DjangoJSONEncoder
+from django.template.loader import get_template
 from django.utils.xmlutils import SimplerXMLGenerator
 from rest_framework import renderers, status
-from rest_framework.exceptions import ErrorDetail
+from rest_framework.exceptions import ErrorDetail, ParseError
+from rest_framework.request import Request
 from rest_framework_xml.renderers import XMLRenderer as DRFXMLRenderer
 
 import formpack
 from kobo.apps.reports.report_data import build_formpack
 from kpi.constants import GEO_QUESTION_TYPES
+from kpi.paginators import DefaultPagination
 from kpi.utils.xml import add_xml_declaration
 
 
-class AssetJsonRenderer(renderers.JSONRenderer):
-    media_type = 'application/json'
-    format = 'json'
+class BasicHTMLRenderer(renderers.BaseRenderer):
+    media_type = 'text/html'
+    format = 'html'
+    charset = 'utf-8'
+    template_name = 'renderers/basic.html'
+
+    PARAM_REGEXES = [
+        # (?P<uid>[^/.]+) -> {uid}
+        (re.compile(r'\(\?P<(?P<name>\w+)>(?:[^)]+)\)'), r'{\g<name>}'),
+        # <converter:name> or <name> -> {name}
+        (re.compile(r'<(?:\w+:)?(?P<name>\w+)>'), r'{\g<name>}'),
+    ]
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        request = renderer_context.get('request') if renderer_context else None
+        resolver_match = getattr(request, 'resolver_match', None)
+        url_pattern_clean = None
+
+        if resolver_match:
+            url_pattern_clean = self._clean_route(resolver_match.route)
+
+        data = self._materialize_results_preview(data, request=request)
+
+        try:
+            pretty = json.dumps(data, indent=2, cls=DjangoJSONEncoder)
+        except:
+            pretty = str(data)
+
+        context = {
+            'pretty': pretty,
+            'q_param': url_pattern_clean or '',
+            'root': resolver_match.url_name == 'api-root',
+        }
+
+        tpl = get_template(self.template_name)
+        return tpl.render(context)
+
+    @classmethod
+    def _clean_route(cls, raw: str | None) -> str | None:
+        if not raw:
+            return None
+        s = raw.strip()
+        # strip leading ^ and trailing $
+        s = s.lstrip('^').rstrip('$')
+        # Replace named groups and path converters by {name}
+        for rx, repl in cls.PARAM_REGEXES:
+            s = rx.sub(repl, s)
+        # Unescape slashes if a regex had them escaped
+        s = s.replace(r'\/', '/')
+        # Normalize multiple slashes (just in case)
+        s = re.sub(r'/{2,}', '/', s)
+
+        return s
+
+    @staticmethod
+    def _extract_raw_route(resolver) -> str | None:
+        """
+        Try to get the raw route/regex from ResolverMatch across Django versions.
+
+        """
+
+        if not resolver:
+            return None
+
+        return resolver.route
+
+    @staticmethod
+    def _materialize_results_preview(data: Any, request: Request | None) -> Any:
+
+        if not isinstance(data, dict) or 'results' not in data:
+            return data
+
+        results = data['results']
+        if not isinstance(results, (Iterator, Generator)):
+            return data
+
+        default_limit = 20
+
+        try:
+            limit = (
+                int(
+                    request.query_params.get(
+                        DefaultPagination.limit_query_param, default_limit
+                    )
+                )
+                if request
+                else default_limit
+            )
+        except (TypeError, ValueError):
+            limit = default_limit
+
+        items = []
+        for i, x in enumerate(results):
+            if i >= limit:
+                break
+            items.append(x)
+
+        data_copy = dict(data)
+        data_copy['results'] = items
+        return data_copy
 
 
 class MediaFileRenderer(renderers.BaseRenderer):
+
     media_type = '*/*'
-    format = None
+    format = ''
     charset = None
     render_style = 'binary'
 
@@ -36,6 +138,28 @@ class MP3ConversionRenderer(MediaFileRenderer):
 
     media_type = 'audio/mpeg'
     format = 'mp3'
+
+
+class SanitizedJSONRenderer(renderers.JSONRenderer):
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return super().render(
+            self._sanitize_non_finite(data), accepted_media_type, renderer_context
+        )
+
+    @classmethod
+    def _sanitize_non_finite(cls, obj):
+        """
+        Recursively replace non-finite float values (NaN, Infinity, -Infinity)
+        with None so the response is valid JSON.
+        """
+        if isinstance(obj, float) and not math.isfinite(obj):
+            return None
+        if isinstance(obj, dict):
+            return {k: cls._sanitize_non_finite(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [cls._sanitize_non_finite(item) for item in obj]
+        return obj
 
 
 class OpenRosaRenderer(DRFXMLRenderer):
@@ -237,6 +361,8 @@ class XMLRenderer(DRFXMLRenderer):
         accepted_media_type=None,
         renderer_context=None,
         relationship=None,
+        relationship_args=None,
+        relationship_kwargs=None,
     ):
         if hasattr(renderer_context.get('view'), 'get_object'):
             obj = renderer_context.get('view').get_object()
@@ -246,22 +372,37 @@ class XMLRenderer(DRFXMLRenderer):
             if relationship is not None and hasattr(obj, relationship):
                 var_or_callable = getattr(obj, relationship)
                 if isinstance(var_or_callable, Callable):
-                    return var_or_callable().xml
+                    xml_source = var_or_callable(
+                        *(relationship_args or tuple()),
+                        **(relationship_kwargs or dict()),
+                    )
+                    if (
+                        hasattr(xml_source, 'details')
+                        and xml_source.details.get('status') == 'failure'
+                    ):
+                        # raise error if XML generation failed
+                        raise ParseError(xml_source.details.get('error'))
+                    return xml_source.xml
                 return var_or_callable.xml
             return add_xml_declaration(obj.xml)
         else:
-            return super().render(data=data,
-                                  accepted_media_type=accepted_media_type,
-                                  renderer_context=renderer_context)
+            return super().render(
+                data=data,
+                accepted_media_type=accepted_media_type,
+                renderer_context=renderer_context,
+            )
 
 
 class XFormRenderer(XMLRenderer):
 
     def render(self, data, accepted_media_type=None, renderer_context=None):
-        return super().render(data=data,
-                              accepted_media_type=accepted_media_type,
-                              renderer_context=renderer_context,
-                              relationship="snapshot")
+        return super().render(
+            data=data,
+            accepted_media_type=accepted_media_type,
+            renderer_context=renderer_context,
+            relationship='snapshot',
+            relationship_kwargs={'regenerate': 'True'},
+        )
 
 
 class XlsRenderer(renderers.BaseRenderer):
