@@ -1673,7 +1673,7 @@ module.exports = do ->
         numCols = parseInt($(el).data('cols'), 10)
         currentSelCols = numCols
         @$select_width.val("w#{numCols}")
-              @group_inputs_change_handler()
+        @group_inputs_change_handler()
         $grid.find('.group-cols-card').each ->
           $c = $(@)
           cn = parseInt($c.data('cols'), 10)
