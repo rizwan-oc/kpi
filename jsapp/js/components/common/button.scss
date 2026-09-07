@@ -147,10 +147,20 @@ $button-border-radius: 6px;
   transform: translateY(1px);
 }
 
-.k-button:focus,
-.k-button:focus-visible {
-  // We handle focus styles in `button-colors` mixin
+.k-button:focus {
   outline: none;
+}
+
+.k-button:focus-visible {
+  // OC-28704: `:focus-visible { outline: none !important; }` in
+  // scss/stylesheets/partials/_base.scss suppresses the outline globally,
+  // so use box-shadow (unaffected by that rule) to keep a visible
+  // keyboard-focus ring on every button type (primary/secondary/text/etc).
+  // Per-type rules (the `button-colors` mixin above, and
+  // `.k-button--type-text` below) still layer their own color/background
+  // focus treatment on top of this ring.
+  outline: none;
+  box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
 }
 
 .k-button__label {
