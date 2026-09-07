@@ -123,6 +123,17 @@
         color: inherit;
         font-weight: 400;
 
+        &:focus-visible {
+            // OC-28704: unlike .card__header-title above, this input has no
+            // visible :focus treatment of its own — only the shared
+            // mdl.form-builder-focus outline (further up this file), which
+            // is suppressed globally in _base.scss — so an empty hint box
+            // gave keyboard users no sign it was selected. box-shadow
+            // survives the global outline: none !important suppression.
+            box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
+            border-radius: 2px;
+        }
+
         &::placeholder {
             color: colors.$kobo-gray-700;
             font-style: italic;
