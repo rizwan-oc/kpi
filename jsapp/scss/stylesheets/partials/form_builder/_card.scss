@@ -113,6 +113,15 @@
             color: colors.$kobo-gray-800;
           }
 
+        &:focus-visible {
+            // OC-28704: match the ring added to .card__header-hint below —
+            // the color-only change above is too subtle to notice next to
+            // the hint box's box-shadow ring, so give this input the same
+            // treatment for a consistent keyboard-focus experience.
+            box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
+            border-radius: 2px;
+        }
+
         &::placeholder {
             color: inherit;
             opacity: 0.6;
