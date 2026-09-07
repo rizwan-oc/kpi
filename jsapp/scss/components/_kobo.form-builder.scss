@@ -246,6 +246,14 @@ $s-form-builder-content-width: 1024px;
         &:hover {
           color: colors.$kobo-teal;
         }
+
+        &:focus-visible {
+          // OC-28704: outline is suppressed globally in _base.scss, so use
+          // box-shadow (unaffected by outline: none !important) to give
+          // this link a visible keyboard-focus ring.
+          box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
+          border-radius: 4px;
+        }
       }
     }
 
