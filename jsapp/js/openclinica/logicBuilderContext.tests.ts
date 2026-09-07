@@ -232,6 +232,26 @@ describe('buildFormContext (P1.5)', () => {
     chai.expect(rows[1].logic).to.deep.equal({})
   })
 
+  it("derives a group's type from its live repeat switch, not the stored type", () => {
+    // The stored `type` flips to 'repeat' only after save + reload; the UI's
+    // switch is the `_isRepeat` detail, which xlform's export also relies on.
+    const unsavedRepeat = fakeRow({
+      columns: { name: 'MEDS', type: 'group', repeat_count: '${N}' },
+      children: [],
+      repeat: true,
+    })
+    const untickedRepeat = fakeRow({ columns: { name: 'OLD', type: 'repeat', repeat_count: '${N}' }, children: [] })
+    const matrix = fakeRow({ columns: { name: 'GRID', type: 'kobomatrix' }, children: [] })
+    const target = q('T')
+    surveyOf([unsavedRepeat, untickedRepeat, matrix, target])
+    chai.expect(buildFormContext(target).rows.map((r) => [r.name, r.type, r.logic])).to.deep.equal([
+      ['MEDS', 'repeat', { repeatCount: '${N}' }],
+      ['OLD', 'group', {}],
+      ['GRID', 'kobomatrix', {}],
+      ['T', 'text', {}],
+    ])
+  })
+
   it('serialises a kobomatrix and its column rows as a group with children', () => {
     const col = q('SCORE', { columns: { type: 'integer' } })
     const matrix = fakeRow({ columns: { name: 'GRID', type: 'kobomatrix', label: 'Grid' }, children: [col] })

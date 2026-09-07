@@ -211,10 +211,17 @@ function buildQuestionRow(row: any, name: string, isTarget: boolean): QuestionRo
 
 function buildGroupRow(row: any, name: string, isTarget: boolean, targetRow: any, depth: number): GroupRow {
   const appearance = readDetail(row, 'appearance')
+  // A group's stored `type` only becomes 'repeat' after save AND reload; in the
+  // live model the repeat switch is the `_isRepeat` detail, which is also what
+  // xlform's own export keys begin_repeat/begin_group on. Derive the effective
+  // type from it so an unsaved or not-yet-reloaded repeat group is not sent as
+  // a plain group (PR review, 2026-09-07). Other group types (kobomatrix) pass through.
+  const storedType = readType(row)
+  const type = storedType === 'group' || storedType === 'repeat' ? (isRepeatRow(row) ? 'repeat' : 'group') : storedType
   return {
     kind: 'group',
     name,
-    type: readType(row),
+    type,
     ...opt('label', readDetail(row, 'label')),
     ...opt('hint', readDetail(row, 'hint')),
     ...opt('shortDisplayName', readDetail(row, 'bind::oc:briefdescription')),
