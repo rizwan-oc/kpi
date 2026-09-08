@@ -247,12 +247,21 @@ $s-form-builder-content-width: 1024px;
           color: colors.$kobo-teal;
         }
 
-        &:focus-visible {
+        &:focus {
           // OC-28704: outline is suppressed globally in _base.scss, so use
           // box-shadow (unaffected by outline: none !important) to give
-          // this link a visible keyboard-focus ring.
+          // this link a visible keyboard-focus ring. Applied on plain
+          // :focus so browsers without :focus-visible support still get a
+          // ring; the @supports block below hides it again for mouse-click
+          // focus wherever :focus-visible is supported.
           box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
           border-radius: 4px;
+        }
+
+        @supports selector(:focus-visible) {
+          &:focus:not(:focus-visible) {
+            box-shadow: none;
+          }
         }
       }
     }
@@ -308,13 +317,22 @@ $s-form-builder-content-width: 1024px;
     color: colors.$kobo-gray-800;
   }
 
-  &:focus-visible {
+  &:focus {
     // OC-28704: outline is suppressed globally in _base.scss, so use
     // box-shadow (unaffected by outline: none !important) to restore a
     // visible keyboard-focus ring, matching the OC-28489 pattern used for
-    // .asset-navigator-card__add-btn further down this file.
+    // .asset-navigator-card__add-btn further down this file. Applied on
+    // plain :focus so browsers without :focus-visible support still get a
+    // ring; the @supports block below hides it again for mouse-click focus
+    // wherever :focus-visible is supported.
     box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
     border-radius: 4px;
+  }
+
+  @supports selector(:focus-visible) {
+    &:focus:not(:focus-visible) {
+      box-shadow: none;
+    }
   }
 }
 

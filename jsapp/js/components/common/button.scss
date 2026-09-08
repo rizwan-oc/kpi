@@ -147,11 +147,12 @@ $button-border-radius: 6px;
   transform: translateY(1px);
 }
 
-.k-button:focus {
+.k-button:focus,
+.k-button:focus-visible {
   outline: none;
 }
 
-.k-button:focus-visible {
+.k-button:focus {
   // OC-28704: `:focus-visible { outline: none !important; }` in
   // scss/stylesheets/partials/_base.scss suppresses the outline globally,
   // so use box-shadow (unaffected by that rule) to keep a visible
@@ -159,8 +160,17 @@ $button-border-radius: 6px;
   // Per-type rules (the `button-colors` mixin above, and
   // `.k-button--type-text` below) still layer their own color/background
   // focus treatment on top of this ring.
-  outline: none;
+  // Applied on plain `:focus` (not just `:focus-visible`) so browsers
+  // without `:focus-visible` support still get a ring; the `@supports`
+  // block below hides it again for mouse-click focus wherever
+  // `:focus-visible` is supported, preserving the original intent.
   box-shadow: 0 0 0 2px colors.$kobo-mid-blue;
+}
+
+@supports selector(:focus-visible) {
+  .k-button:focus:not(:focus-visible) {
+    box-shadow: none;
+  }
 }
 
 .k-button__label {
