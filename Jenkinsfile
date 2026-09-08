@@ -33,7 +33,7 @@ pipeline {
             }
             agent {
                 docker {
-                    image 'node:20.18.1-bullseye'
+                    image 'node:20.18.1-bookworm'
                     args '--user root:root --shm-size=2g'
                     reuseNode true
                 }
