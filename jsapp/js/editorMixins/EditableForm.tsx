@@ -61,7 +61,7 @@ import {
 } from '#/openclinica/applyExpression'
 import { unmountAll } from '#/openclinica/generateButtonBridge'
 import { logicBuilderClient } from '#/openclinica/logicBuilderClient'
-import { buildFieldContext, buildItemDefinition, readItemName } from '#/openclinica/logicBuilderContext'
+import { buildFormContext, readItemName } from '#/openclinica/logicBuilderContext'
 import { GENERATE_REQUEST_KEY, columnToTab } from '#/openclinica/logicBuilderTabs'
 import { useBuilderInert } from '#/openclinica/useBuilderInert'
 import pageState from '#/pageState.store'
@@ -496,8 +496,8 @@ export default function EditableForm(props: EditableFormProps) {
           scope={{
             itemName,
             attribute: tab,
-            fields: buildFieldContext(request.row),
-            item: buildItemDefinition(request.row),
+            // P1.5: the whole form as a tree, this row marked as the target.
+            form: buildFormContext(request.row),
           }}
           client={logicBuilderClient}
           // inertRoot deliberately NOT passed: the host owns the inert boundary

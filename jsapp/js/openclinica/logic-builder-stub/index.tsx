@@ -14,42 +14,67 @@
  * exported TYPES mirror the package's public surface faithfully so kpi's code is
  * still type-checked in CI; the runtime exports are inert — the two components
  * never render and the generate client never reaches the network.
- * Keep in sync with the pinned logic-builder version (0.4.0).
+ * Keep in sync with the pinned logic-builder version (0.6.0).
  */
 import type { RefObject } from 'react'
 
 export type ExpressionTab = 'calculation' | 'default' | 'constraint' | 'required' | 'relevant' | 'repeatCount'
 
-export interface FormFieldChoice {
+export interface FormChoice {
   readonly value: string
   readonly label: string
+  readonly image?: string
 }
 
-export interface FormField {
+interface FormRowBase {
   readonly name: string
   readonly type: string
-  readonly label: string
-  readonly choices?: readonly FormFieldChoice[]
+  readonly label?: string
+  readonly hint?: string
+  readonly shortDisplayName?: string
+  readonly description?: string
+  readonly contactDataType?: string
+  readonly appearance?: string
+  readonly width?: string
+  readonly isTarget?: true
 }
 
-export interface FormFieldContext {
-  readonly fields: readonly FormField[]
+export interface QuestionRow extends FormRowBase {
+  readonly kind: 'question'
+  readonly readOnly?: string
+  readonly choices?: readonly FormChoice[]
+  readonly logic: {
+    readonly required?: string
+    readonly relevant?: string
+    readonly constraint?: string
+    readonly constraintMessage?: string
+    readonly default?: string
+    readonly calculation?: string
+    readonly trigger?: string
+  }
 }
 
-export interface ItemDefinition {
-  readonly name: string
-  readonly type: string
-  readonly label: string
-  readonly choices?: readonly FormFieldChoice[]
-  readonly logic: Readonly<Record<ExpressionTab, string>>
+export interface GroupRow extends FormRowBase {
+  readonly kind: 'group'
+  readonly rows: readonly FormRow[]
+  readonly logic: {
+    readonly relevant?: string
+    readonly repeatCount?: string
+  }
+}
+
+export type FormRow = QuestionRow | GroupRow
+
+export interface FormContext {
+  readonly rows: readonly FormRow[]
 }
 
 export interface GenerationRequest {
   readonly prompt: string
   readonly attribute: ExpressionTab
   readonly targetFieldName: string
-  readonly fields: FormFieldContext
-  readonly item: ItemDefinition
+  readonly form: FormContext
+  readonly currentProposal?: string
 }
 
 export interface GenerationSuccess {
@@ -95,8 +120,7 @@ export interface AiGeneratorDialogProps {
   readonly scope: {
     readonly itemName: string
     readonly attribute: ExpressionTab
-    readonly fields: FormFieldContext
-    readonly item: ItemDefinition
+    readonly form: FormContext
   }
   readonly client: GenerateClient
   readonly inertRoot?: RefObject<HTMLElement> | HTMLElement | null
