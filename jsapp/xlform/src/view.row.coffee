@@ -839,6 +839,7 @@ module.exports = do ->
                 'trigger'
                 'constraint'
                 'constraint_message'
+                'required_message'
               ]
                 val.set 'value', '' if key is 'bind::oc:itemgroup'
                 continue

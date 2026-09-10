@@ -19,18 +19,22 @@ export function getFormBuilderAssetType(assetType?: AssetTypeName, desiredAssetT
   return null
 }
 
-// OC-27875: these XLSForm row settings are not supported on eConsent
-// signature items. Form Designer's row settings drawer already clears
-// `bind::oc:itemgroup` for signature rows as a render side effect
+// OC-27875/OC-28719: these XLSForm row settings are not supported on
+// eConsent signature items. Form Designer's row settings drawer already
+// clears `bind::oc:itemgroup` for signature rows as a render side effect
 // (view.row.coffee), but that never runs for a row whose drawer was never
 // opened - e.g. one loaded from an import - so a stale value round-trips
-// through save/reopen untouched unless stripped here too. Scoped to
-// `signature` only, per product decision - contactdata/identifier/clinicaldata
-// rows are out of scope for this ticket.
+// through save/reopen untouched unless stripped here too. `required_message`
+// has no dedicated drawer input at all (the `required` mixin in
+// view.rowDetail.coffee only renders Always/Conditional/Never radios), so an
+// imported value is retained silently unless stripped here (OC-28719).
+// Scoped to `signature` only, per product decision - contactdata/identifier/
+// clinicaldata rows are out of scope for this ticket.
 const UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS = [
   'bind::oc:itemgroup',
   'appearance',
   'required',
+  'required_message',
   'readonly',
   'default',
   'calculation',
