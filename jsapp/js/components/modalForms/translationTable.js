@@ -9,6 +9,7 @@ import { getAssetsRetrieveQueryKey } from '#/api/react-query/manage-projects-and
 import bem from '#/bem'
 import Button from '#/components/common/button'
 import LoadingSpinner from '#/components/common/loadingSpinner'
+import { ECONSENT_SIGNATURE_EXTERNAL_VALUE } from '#/components/formBuilder/econsentSignature'
 import { LockingRestrictionName } from '#/components/locking/lockingConstants'
 import { hasRowRestriction } from '#/components/locking/lockingUtils'
 import { GROUP_TYPES_BEGIN, MODAL_TYPES, QUESTION_TYPES } from '#/constants'
@@ -81,6 +82,16 @@ export class TranslationTable extends React.Component {
       }
 
       translated.forEach((property) => {
+        // OC-28719: required_message isn't supported on eConsent signature
+        // items (see UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS in
+        // formBuilderUtils.ts). Without this check, a translated
+        // required_message left over on a signature row from before that
+        // discard existed still surfaces as an editable "Required message"
+        // row here, letting a user set values the save step immediately
+        // strips.
+        if (property === 'required_message' && row['bind::oc:external'] === ECONSENT_SIGNATURE_EXTERNAL_VALUE) {
+          return
+        }
         if (row[property] && row[property][0]) {
           this.state.tableData.push({
             original: row[property][0],
