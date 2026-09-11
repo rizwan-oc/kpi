@@ -44,11 +44,23 @@ const UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS = [
 // Discards `UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS` from any row using
 // `bind::oc:external = "signature"`, so the saved/previewed form definition
 // only retains settings eConsent signature items actually support.
+//
+// Matches by prefix, not just exact key, because a translated property
+// (e.g. `required_message` on a form with 2+ languages) round-trips through
+// `toFlatJSON()` as one key per language - the primary language under the
+// bare field name, every other language under `${field}::${langName}` (see
+// `flatten_translated_fields` in model.inputParser.coffee). An exact-key
+// delete would silently miss every non-primary-language value.
 function discardUnsupportedEConsentSignatureSettings(flatSurvey: FlatSurvey): FlatSurvey {
-  flatSurvey.survey.forEach((row) => {
+  flatSurvey.survey?.forEach((row) => {
     if (row['bind::oc:external'] === ECONSENT_SIGNATURE_EXTERNAL_VALUE) {
-      UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS.forEach((field) => {
-        delete row[field]
+      Object.keys(row).forEach((key) => {
+        const isUnsupported = UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS.some(
+          (field) => key === field || key.startsWith(`${field}::`),
+        )
+        if (isUnsupported) {
+          delete row[key]
+        }
       })
     }
   })
@@ -183,7 +195,14 @@ export function mergeFreshTranslations(
     if (fresh) applyItem(ch, fresh)
   })
 
-  return JSON.stringify(surveyData)
+  // OC-28719: `applyItem` above re-applies every translated prop's value
+  // straight from `freshContent` (the last-saved asset), with no concept of
+  // eConsent signature rows. If `required_message` (or another
+  // UNSUPPORTED_ECONSENT_SIGNATURE_FIELDS entry) was translated and already
+  // present on a signature row in the saved asset, this step would silently
+  // undo `surveyToValidJson`'s discard for it. Re-run the same discard here
+  // so the invariant holds regardless of what the merge above just did.
+  return JSON.stringify(discardUnsupportedEConsentSignatureSettings(surveyData))
 }
 
 /**

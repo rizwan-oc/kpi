@@ -827,7 +827,14 @@ module.exports = do ->
               new $viewRowDetail.DetailView(model: val, rowView: @).render().insertInDOM(@)
           else
             if key isnt 'select_one_from_file_filename'
-              if isEConsentSig and key in [
+              # `required_message` is translatable: on a form with 2+
+              # languages, toFlatJSON()/attributesArray() surface it as one
+              # key per language - `required_message` for the primary
+              # language, `required_message::<langName>` for every other one
+              # (see flatten_translated_fields in model.inputParser.coffee).
+              # An exact-match `key in [...]` only ever catches the primary
+              # language, so non-primary translations still render here.
+              isUnsupportedEConsentSigField = key in [
                 'bind::oc:itemgroup'
                 'bind::oc:external'
                 'bind::oc:briefdescription'
@@ -840,7 +847,8 @@ module.exports = do ->
                 'constraint'
                 'constraint_message'
                 'required_message'
-              ]
+              ] or key.indexOf('required_message::') is 0
+              if isEConsentSig and isUnsupportedEConsentSigField
                 val.set 'value', '' if key is 'bind::oc:itemgroup'
                 continue
               else if key is 'bind::oc:itemgroup' and isPiiExternalValue
