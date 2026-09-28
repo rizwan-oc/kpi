@@ -136,7 +136,6 @@ select.skiplogic__delimselect {
 }
 
 .constraint__editor {
-  padding-top: 14px;
   position: relative;
 }
 
@@ -154,11 +153,15 @@ select.skiplogic__delimselect {
   }
 }
 
-// P1.18: Relevant/Constraint mount the AI Assistant button alone in
-// .skiplogic__extras, above the "+ Add a condition" / "Manually enter..."
-// mode-selector buttons — no title to space it off, and those buttons start
-// flush with the row's left edge. Resets _card_settings.scss's default
-// title-relative spacing.
-.skiplogic__extras > .logic-builder-generate-mount {
-  margin-left: 0;
+// P1.20: Validation's Expression and Error message labels sit above their
+// fields like every other logic panel's, so the field takes the full width.
+.card__settings__fields__field > .logic-panel__label + .settings__input {
+  display: block;
+  width: 100%;
+}
+
+// P1.20 AC4: the Expression label now sits above Relevant's hand-code field,
+// so the field drops its top gap to stay level with the trash button.
+.logic-panel__label + .skiplogic__handcode-edit {
+  margin-top: 0;
 }

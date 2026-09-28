@@ -597,9 +597,22 @@ module.exports = do ->
   viewRowDetail.DetailViewMixins.constraint_message =
     html: ->
       @$el.addClass("card__settings__fields--active")
-      viewRowDetail.Templates.textbox @cid, @model.key, t("Constraint Message"), 'text'
+      # P1.20 AC4: Templates.field would add a trailing colon and the inline
+      # label column; this label matches the Expression label above it.
+      """
+      <div class="card__settings__fields__field">
+        <label class="logic-panel__label" for="#{@cid}">#{t("Error message")}</label>
+        <span class="settings__input">
+          <input type="text" name="#{@model.key}" id="#{@cid}" class="text" dir="auto" />
+        </span>
+      </div>
+      """
     insertInDOM: (rowView)->
-      @_insertInDOM rowView.cardSettingsWrap.find('.js-card-settings-validation-criteria').eq(0)
+      # P1.20: sit above the panel's help text, which the constraint view
+      # (rendered first, per columnOrder) appends to this list.
+      $target = rowView.cardSettingsWrap.find('.js-card-settings-validation-criteria').eq(0)
+      $help = $target.children('.js-validation-help')
+      if $help.length then $help.before(@el) else @_insertInDOM $target
     afterRender: ->
       @listenForInputChange()
 
@@ -638,14 +651,20 @@ module.exports = do ->
       """
 
     afterRender: ->
-      # OC fork (P1.1): .skiplogic__extras (holding the AI Generate button) is
-      # rendered ABOVE .skiplogic__main so the button sits at the top of the
-      # panel, matching the other logic panels. It must NEVER be inside
-      # .skiplogic__main — the facade calls .empty() on that node every mode switch.
+      # OC fork (P1.1, P1.20): the heading row (holding the AI Generate button)
+      # and the help text sit OUTSIDE .skiplogic__main — the facade calls
+      # .empty() on that node every mode switch.
+      if @model._parent.constructor.key == 'group'
+        heading = t('Relevant Logic - when should this group be shown?')
+        help = t('This group is shown only when the expression is true. Leave it blank to always show the group.')
+      else
+        heading = t('Relevant Logic - when should this item be shown?')
+        help = t('This item is shown only when the expression is true. Leave it blank to always show the item.')
       @$el.find(".relevant__editor").html("""
-        <p class="skiplogic__extras">
-        </p>
+        #{$rowTemplates.logicPanelHeadHtml('logic-panel__header', heading)}
         <div class="skiplogic__main"></div>
+        <p class="logic-panel__help">#{help}</p>
+        #{$rowTemplates.xpathDocLinkHtml()}
       """)
 
       @target_element = @$('.skiplogic__main')
@@ -653,7 +672,7 @@ module.exports = do ->
       @model.facade.render @target_element
 
       generateButtonBridge.mountGenerateButton(
-        @$('.skiplogic__extras').get(0)
+        @$('.logic-panel__head').get(0)
         { row: @model._parent, attribute: 'relevant' }
       )
 
@@ -690,13 +709,11 @@ module.exports = do ->
       </div>
       """
     afterRender: ->
-      # OC fork (P1.1): .skiplogic__extras (holding the AI Generate button) is
-      # rendered ABOVE .skiplogic__main so the button sits at the top of the
-      # panel, matching the other logic panels. It must NEVER be inside
-      # .skiplogic__main — the facade calls .empty() on that node every mode switch.
+      # OC fork (P1.1, P1.20): the heading row (holding the AI Generate button)
+      # sits OUTSIDE .skiplogic__main — the facade calls .empty() on that node
+      # every mode switch. The help text is appended in insertInDOM.
       @$el.find(".constraint__editor").html("""
-        <p class="skiplogic__extras">
-        </p>
+        #{$rowTemplates.logicPanelHeadHtml('logic-panel__header', t('Validation Criteria - what values should this item accept?'))}
         <div class="skiplogic__main"></div>
       """)
 
@@ -705,7 +722,7 @@ module.exports = do ->
       @model.facade.render @target_element
 
       generateButtonBridge.mountGenerateButton(
-        @$('.skiplogic__extras').get(0)
+        @$('.logic-panel__head').get(0)
         { row: @model._parent, attribute: 'constraint' }
       )
 
@@ -731,7 +748,16 @@ module.exports = do ->
       )
 
     insertInDOM: (rowView) ->
-      @_insertInDOM rowView.cardSettingsWrap.find('.js-card-settings-validation-criteria')
+      $target = rowView.cardSettingsWrap.find('.js-card-settings-validation-criteria')
+      @_insertInDOM $target
+      # P1.20: the help text goes beneath Error message, a separate view in
+      # this list, so it is its own list item rather than part of this view.
+      $target.append("""
+        <li class="card__settings__fields__field js-validation-help">
+          <p class="logic-panel__help">#{t('A value is accepted when the expression is true. Use')} <code>.</code> #{t("to refer to this item's value, as in")} <code>. &gt; 0</code>. #{t('When the expression is false, the Error message is shown. The expression is checked only when the item has a value, so use Required to make an answer mandatory.')}</p>
+          #{$rowTemplates.xpathDocLinkHtml()}
+        </li>
+      """)
 
   viewRowDetail.DetailViewMixins.name =
     isInGroup: ->
@@ -944,23 +970,16 @@ module.exports = do ->
       @_insertInDOM target
     html: ->
       @$el.addClass('card__settings__fields--active')
-      $header = $('<h4/>', { class: 'repeat-count-panel__header' }).text(t('Repeat Count - how many times should this group repeat?'))
-      $hint = $('<p/>', { class: 'repeat-count-panel__hint' }).text(t('This group has repeating enabled. Enter an expression to set the number of repeats automatically, or leave blank to allow users to add and remove repeats manually.'))
-      $docLinkAnchor = $('<a/>', {
-        href: $rowTemplates.XPATH_DOCS_URL
-        target: '_blank'
-        rel: 'noopener noreferrer'
-      }).text(t('documentation'))
-      $docLink = $('<p/>', { class: 'panel__doc-link' })
-        .append(document.createTextNode(t('See the') + ' '))
-        .append($docLinkAnchor)
-        .append(document.createTextNode(' ' + t('for more information about xpath expressions.')))
+      $header = $($rowTemplates.logicPanelHeadHtml('repeat-count-panel__header', t('Repeat Count - how many times should this group repeat?')))
+      $label = $('<label/>', { class: 'logic-panel__label', for: "#{@cid}-repeat-count" }).text(t('Expression'))
+      $hint = $('<p/>', { class: 'logic-panel__help' }).text(t('Enter a number or an XLSForm expression to set how many times this group repeats. Leave it blank to let users add and remove repeats themselves.'))
       @$input = $('<input/>', {
         type: 'text'
+        id: "#{@cid}-repeat-count"
         class: 'repeat-count-panel__input'
         placeholder: t('No repeat count yet — type one, or use the AI Assistant.')
       })
-      @$el.append($header).append($hint).append($docLink).append(@$input)
+      @$el.append($header).append($label).append(@$input).append($hint).append($rowTemplates.xpathDocLinkHtml())
 
       fireChange = =>
         val = @$input.val()
@@ -985,7 +1004,7 @@ module.exports = do ->
         @$input.val(modelValue)
       # OC fork (P1.1): AI Generate button in the Repeat Count panel header.
       generateButtonBridge.mountGenerateButton(
-        @$el.find('.repeat-count-panel__header').get(0)
+        @$el.find('.logic-panel__head').get(0)
         { row: @model._parent, attribute: 'repeat_count' }
       )
       # OC fork (P1.1): keep the visible field in sync when the AI dialog's

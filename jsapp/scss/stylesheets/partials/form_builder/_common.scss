@@ -9,6 +9,45 @@
   position: relative;
 }
 
+.logic-panel__header {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+// Also beats `.card__settings__fields__field > label` (_card_settings.scss),
+// which right-aligns settings labels in a 28% column.
+.card__settings .logic-panel__label {
+  display: block;
+  width: auto;
+  margin-right: 0;
+  text-align: left;
+  text-transform: none;
+  line-height: normal;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.logic-panel__help {
+  font-size: 12px;
+  font-weight: normal;
+  color: colors.$kobo-gray-40;
+  margin-top: 8px;
+  line-height: 1.5;
+
+  p {
+    margin: 0 0 6px;
+  }
+
+  code {
+    background-color: #f1f5f9;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 11px;
+  }
+}
+
 .panel__doc-link {
   font-size: 12px;
   font-weight: normal;

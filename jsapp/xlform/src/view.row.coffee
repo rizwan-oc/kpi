@@ -876,11 +876,11 @@ module.exports = do ->
       defaultModel = @model.get('default')
       if questionType not in typesWithoutDefault and not isEConsentSig and defaultModel
         @cardSettingsWrap.find('.js-default-value-tab').removeClass('default-value-tab--hidden')
-        $defaultPanel = $($viewTemplates.$$render('row.defaultValuePanel'))
+        $defaultPanel = $($viewTemplates.$$render('row.defaultValuePanel', @model.cid))
         $defaultPanel.appendTo(@cardSettingsWrap.find('.js-card-settings-default-value'))
         # OC fork (P1.1): AI Generate button in the Default Value panel header.
         generateButtonBridge.mountGenerateButton(
-          $defaultPanel.find('.default-value-panel__header').get(0)
+          $defaultPanel.find('.logic-panel__head').get(0)
           { row: @model, attribute: 'default' }
         )
         $defaultTextarea = $defaultPanel.find('.js-default-value-input')
@@ -929,11 +929,11 @@ module.exports = do ->
       triggerModel = @model.get('trigger')
       if questionType not in typesWithoutCalculation and not isEConsentSig and calculationModel
         @cardSettingsWrap.find('.js-calculation-tab').removeClass('calculation-tab--hidden')
-        $calcPanel = $($viewTemplates.$$render('row.calculationPanel'))
+        $calcPanel = $($viewTemplates.$$render('row.calculationPanel', @model.cid))
         $calcPanel.appendTo(@cardSettingsWrap.find('.js-card-settings-calculation'))
         # OC fork (P1.1): AI Generate button in the Calculation panel header.
         generateButtonBridge.mountGenerateButton(
-          $calcPanel.find('.calculation-panel__header').get(0)
+          $calcPanel.find('.logic-panel__head').get(0)
           { row: @model, attribute: 'calculation' }
         )
 
@@ -1004,7 +1004,7 @@ module.exports = do ->
           # CSS) when a non-Calculate item has a calculation but no trigger and
           # is not read-only.
           readonlyModel = @model.get('readonly')
-          hintText = t('Items of this type with a calculation must be read-only. Set this item to read-only in Advanced Options under "Edit".')
+          hintText = t('This item must be read-only because its calculation has no trigger. Select Read only on the Question Options tab, or select a trigger item below.')
           updateCalcReadonlyHint = =>
             $field = $calcTextarea.closest('.calculation-panel__field')
             show = $modelUtils.shouldShowCalculationReadonlyHint(

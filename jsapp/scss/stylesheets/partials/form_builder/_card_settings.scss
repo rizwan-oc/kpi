@@ -666,13 +666,23 @@
   margin-top: 3px;
 }
 
-// P1.18: the AI Assistant button's mount, shared across all six logic panels
-// (generateButtonBridge.tsx). Default assumes it sits beside a panel title —
-// spaced off the text and bottom-aligned with its line (not `middle`, which
-// centers the taller button on the title's line box). Relevant/Constraint
-// override this in _settings_skiplogic.scss, where it mounts alone above the
-// mode-selector buttons instead.
-.logic-builder-generate-mount {
-  margin-left: 12px;
-  vertical-align: bottom;
+// P1.20 AC6: every logic panel's heading row (logicPanelHeadHtml). The AI
+// Assistant button (generateButtonBridge.tsx) mounts after the heading and
+// sits at the row's right edge; a long heading wraps beside it.
+.logic-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  // The row, not the heading, spaces the content below it, so the taller
+  // button never crowds the next control.
+  margin-bottom: 12px;
+
+  > h2 {
+    margin: 0;
+  }
+
+  > .logic-builder-generate-mount {
+    flex: none;
+  }
 }
