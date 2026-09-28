@@ -65,6 +65,16 @@ do ->
       insert('constraint_message', $settings)
       expect(order($settings)).toEqual(['is-constraint', 'is-constraint_message', help])
 
+  describe 'P1.20: Repeat Count panel', ->
+    it 'renders the heading row, a labelled Expression input, help text and the doc link', ->
+      ctx = $.extend({}, viewRowDetail.DetailViewMixins.repeat_count, {cid: 'c9', $el: $('<div/>'), model: {}})
+      ctx.html()
+      expect(ctx.$el.find('.logic-panel__head h2').text()).toBe('Repeat Count - how many times should this group repeat?')
+      expect(ctx.$el.find('label[for="c9-repeat-count"]').text()).toBe('Expression')
+      expect(ctx.$el.find('input#c9-repeat-count').length).toBe(1)
+      expect(ctx.$el.find('.logic-panel__help').text()).toBe('Enter a number or an XLSForm expression to set how many times this group repeats. Leave it blank to let users add and remove repeats themselves.')
+      expect(ctx.$el.find('.panel__doc-link').text()).toContain('for more information about XLSForm expressions.')
+
   describe 'P1.20: logic panel templates share the heading row', ->
     for [name, heading] in [
       ['requiredLogicPanel', 'Required Logic - when should this item be required?']
