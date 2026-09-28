@@ -396,6 +396,7 @@ class BigModal extends React.Component {
               asset={this.props.params.asset}
               langString={this.props.params.langString}
               langIndex={this.props.params.langIndex}
+              hasUnsavedChanges={this.props.params.hasUnsavedChanges}
             />
           )}
           {this.props.params.type === MODAL_TYPES.ENCRYPT_FORM && (

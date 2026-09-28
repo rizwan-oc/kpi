@@ -12,6 +12,7 @@ import LoadingSpinner from '#/components/common/loadingSpinner'
 import { ECONSENT_SIGNATURE_EXTERNAL_VALUE } from '#/components/formBuilder/econsentSignature'
 import { LockingRestrictionName } from '#/components/locking/lockingConstants'
 import { hasRowRestriction } from '#/components/locking/lockingUtils'
+import { renderUnsavedDraftBanner } from '#/components/modalForms/TranslationSettings'
 import { GROUP_TYPES_BEGIN, MODAL_TYPES, QUESTION_TYPES } from '#/constants'
 import pageState from '#/pageState.store'
 import { stores } from '#/stores'
@@ -245,6 +246,7 @@ export class TranslationTable extends React.Component {
     pageState.switchModal({
       type: MODAL_TYPES.FORM_LANGUAGES,
       asset: this.props.asset,
+      hasUnsavedChanges: this.props.hasUnsavedChanges,
     })
   }
 
@@ -267,6 +269,7 @@ export class TranslationTable extends React.Component {
   render() {
     return (
       <bem.FormModal m='translation-table'>
+        {renderUnsavedDraftBanner(this.props.hasUnsavedChanges)}
         <div className='translation-table-container'>
           <ReactTable
             data={this.state.tableData}
