@@ -19,6 +19,24 @@ import pageState from '#/pageState.store'
 import { stores } from '#/stores'
 import { type LangObject, escapeHtml, getLangString, notify } from '#/utils'
 
+// OC-28841: shown on every Manage Languages page (list, primary language,
+// translations table) while the Form Designer draft has unsaved changes, since
+// those pending edits are not reflected in the translations shown here.
+export function renderUnsavedDraftBanner(hasUnsavedChanges?: () => boolean) {
+  if (!hasUnsavedChanges?.()) {
+    return null
+  }
+  return (
+    <InlineMessage
+      type='warning'
+      icon='alert'
+      message={t(
+        'You have unsaved changes in the form draft. Save those changes for the best experience managing languages.',
+      )}
+    />
+  )
+}
+
 interface TranslationSettingsProps {
   asset: AssetResponse
   hasUnsavedChanges?: () => boolean
@@ -122,6 +140,7 @@ export class TranslationSettings extends React.Component<TranslationSettingsProp
       asset: this.state.asset,
       langString: langString,
       langIndex: index,
+      hasUnsavedChanges: this.props.hasUnsavedChanges,
     })
   }
 
@@ -341,6 +360,7 @@ export class TranslationSettings extends React.Component<TranslationSettingsProp
     return (
       <bem.FormModal m='translation-settings'>
         <bem.FormModal__item>
+          {renderUnsavedDraftBanner(this.props.hasUnsavedChanges)}
           <bem.FormView__cell m='translation-note'>
             <p>
               {t(
@@ -367,6 +387,7 @@ export class TranslationSettings extends React.Component<TranslationSettingsProp
     return (
       <bem.FormModal m='translation-settings'>
         <bem.FormModal__item>
+          {renderUnsavedDraftBanner(this.props.hasUnsavedChanges)}
           <bem.FormView__cell m='label'>{t('Current languages')}</bem.FormView__cell>
           {translations[0] === null && (
             <InlineMessage
