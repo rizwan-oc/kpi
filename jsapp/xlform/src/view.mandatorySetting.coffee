@@ -76,7 +76,7 @@ module.exports = do ->
       # Not mounted when hideConditional=true — no Conditional option, no Generate.
       unless @hideConditional
         generateButtonBridge.mountGenerateButton(
-          @$panelEl.find('.required-logic-panel__header').get(0)
+          @$panelEl.find('.logic-panel__head').get(0)
           { row: @model._parent, attribute: 'required' }
         )
       @_bindPanelEvents()

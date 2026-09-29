@@ -30,9 +30,8 @@
 
 .calculation-panel {
   &__header {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
-    margin-bottom: 20px;
   }
 
   &__field {
@@ -41,14 +40,6 @@
     &:last-child {
       margin-bottom: 0;
     }
-  }
-
-  &__label {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: #334155;
-    margin-bottom: 6px;
   }
 
   &__textarea {

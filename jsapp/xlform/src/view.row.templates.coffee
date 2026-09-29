@@ -4,7 +4,12 @@ module.exports = do ->
   XPATH_DOCS_URL = 'https://servicedesk.openclinica.com/support/solutions/articles/158000436443-form-logic'
 
   xpathDocLinkHtml = ->
-    """<p class="panel__doc-link">#{t('See the')} <a href="#{XPATH_DOCS_URL}" target="_blank" rel="noopener noreferrer">#{t('documentation')}</a> #{t("for more information about xpath expressions.")}</p>"""
+    """<p class="panel__doc-link">#{t('See the')} <a href="#{XPATH_DOCS_URL}" target="_blank" rel="noopener noreferrer">#{t('documentation')}</a> #{t("for more information about XLSForm expressions.")}</p>"""
+
+  # P1.20 AC6: every logic panel's heading shares a row with its AI Assistant
+  # button, which mounts into .logic-panel__head after the heading and sits at
+  # the row's right edge (_card_settings.scss).
+  logicPanelHeadHtml = (headerClass, title) -> """<div class="logic-panel__head"><h2 class="#{headerClass}">#{title}</h2></div>"""
 
   expandingSpacerHtml = """
       <div class="survey__row__spacer  row clearfix expanding-spacer-between-rows expanding-spacer-between-rows--depr">
@@ -481,9 +486,10 @@ module.exports = do ->
   requiredLogicPanel = () ->
     """
     <div class="required-logic-panel">
-      <h2 class="required-logic-panel__header">#{t('Required Logic - when should this item be required?')}</h2>
+      #{logicPanelHeadHtml('required-logic-panel__header', t('Required Logic - when should this item be required?'))}
       <p class="required-logic-panel__status js-required-logic-status" aria-live="polite"></p>
       <label class="text-box text-box--on-white required-logic-panel__input-wrapper">
+        <span class="logic-panel__label">#{t('Expression')}</span>
         <input
           type="text"
           class="text-box__input mandatory-setting-custom-text js-mandatory-setting-custom-text"
@@ -491,7 +497,7 @@ module.exports = do ->
           placeholder="#{t('No required condition yet — type one, or use the AI Assistant.')}"
         >
       </label>
-      <p class="required-logic-panel__hint">#{t("This item will be treated as required when the expression above is 'true'.")}</p>
+      <p class="required-logic-panel__hint">#{t('This item is required when the expression is true and optional when it is false. To make it always or never required, change Required in Question Options instead.')}</p>
       #{xpathDocLinkHtml()}
     </div>
     """
@@ -541,41 +547,51 @@ module.exports = do ->
     """
     return template
 
-  defaultValuePanel = () ->
+  defaultValuePanel = (cid) ->
     """
     <div class="default-value-panel">
-      <h2 class="default-value-panel__header">#{t('Default value - Prefilled when the form loads')}</h2>
+      #{logicPanelHeadHtml('default-value-panel__header', t('Default Value - what should this item start with?'))}
+      <label class="logic-panel__label" for="#{cid}-default-value">#{t('Expression')}</label>
       <textarea
+        id="#{cid}-default-value"
         class="default-value-panel__input js-default-value-input"
         placeholder="#{t('No default value yet — type one, or use the AI Assistant.')}"
       ></textarea>
       <div class="default-value-panel__hint">
-        <p>#{t('If a Default value is provided, this item will be automatically filled in with that Default when the form is first opened. The Default Value can be:')}</p>
+        <p>#{t('A Default Value fills in this item automatically when the form is started. For an item in a repeating group, it also fills in the item in each new repeat when that repeat is added.')}</p>
+        <p>#{t('The Default Value is applied only once. If a user changes the value or blanks it out, the Default Value is not filled in again, even after the form is closed and reopened. It is applied again only if the whole form is cleared in Study Runner and started again. To keep a value in step with other items, use a Calculation instead.')}</p>
+        <p>#{t('The Default Value can be:')}</p>
         <ul>
           <li>#{t("A constant value like")} <code>1</code> #{t("or")} <code>'text'</code></li>
-          <li>#{t("An xpath expression like")} <code>today()</code> #{t("to fill in today's date")}</li>
+          <li>#{t("An XLSForm expression like")} <code>today()</code> #{t("to fill in today's date")}</li>
         </ul>
-        <p>#{t('See the')} <a href="https://docs.openclinica.com/oc4/building-forms-and-studies/oc4-design-study/#content-17316" target="_blank" rel="noopener noreferrer">#{t('documentation')}</a> #{t("for more information about xpath expressions and Default Values. Note that using this field will cause this item's Relevant Logic to be overridden, and this item displayed by default.")}</p>
+        <p>#{t('An item with a Default Value is shown when the form is started, even if its Relevant Logic is false.')}</p>
       </div>
+      #{xpathDocLinkHtml()}
     </div>
     """
 
-  calculationPanel = () ->
+  calculationPanel = (cid) ->
     """
     <div class="calculation-panel">
-      <h2 class="calculation-panel__header">#{t('Calculation')}</h2>
+      #{logicPanelHeadHtml('calculation-panel__header', t("Calculation - how should this item's value be calculated?"))}
       <div class="calculation-panel__field">
-        <label class="calculation-panel__label">#{t('Calculation expression')}</label>
+        <label class="logic-panel__label" for="#{cid}-calculation">#{t('Expression')}</label>
         <textarea
+          id="#{cid}-calculation"
           class="calculation-panel__textarea js-calculation-input"
           placeholder="#{t('No calculation yet — type one, or use the AI Assistant.')}"
         ></textarea>
       </div>
+      <div class="logic-panel__help">
+        <p>#{t("This item's value is set by the expression. Unless a trigger item is selected below, it is recalculated whenever data in the form changes and every time the form is opened for editing. That keeps it current with the items it refers to, including data from other forms and time-based values such as")} <code>now()</code>.</p>
+        <p>#{t('If this item is a question users see on the form (any type other than Calculate), select')} <strong>#{t('Read only')}</strong> #{t('on the')} <strong>#{t('Question Options')}</strong> #{t('tab, or select a trigger item below. Otherwise the calculation will overwrite anything a user enters. To fill in a starting value only once, use a Default Value instead.')}</p>
+      </div>
       <div class="calculation-panel__field">
-        <label class="calculation-panel__label">#{t('Triggered by')}</label>
+        <label class="logic-panel__label">#{t('Triggered by')}</label>
         <select class="calculation-panel__select js-calculation-trigger-select">
         </select>
-        <p class="calculation-panel__hint">#{t('Calculation items recalculate their value every time any data in the form changes, by default. To restrict this item to recalculate only when a specific item is changed, select that item above. This could improve performance with very complex forms.')}</p>
+        <p class="calculation-panel__hint">#{t("To control when the value is calculated, select a trigger item. The calculation then runs only when that item's value changes. It does not run when other data changes or when the form is reopened. This lets the calculated value act as a starting point that users can edit. Their edit is overwritten only if the trigger item's value changes.")}</p>
       </div>
       #{xpathDocLinkHtml()}
     </div>
@@ -603,5 +619,6 @@ module.exports = do ->
     defaultValuePanel: defaultValuePanel
     iconTooltip: iconTooltip
     lockedFeatures: lockedFeatures
-    XPATH_DOCS_URL: XPATH_DOCS_URL
+    xpathDocLinkHtml: xpathDocLinkHtml
+    logicPanelHeadHtml: logicPanelHeadHtml
   }

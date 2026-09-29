@@ -390,6 +390,11 @@ module.exports = do ->
     render: ($destination) ->
       $destination.append @$parent
       @textarea.render().attach_to @$parent
+      # P1.20 AC4: label the hand-code field; the builder mode has no single field.
+      fieldId = "#{@textarea.cid}-relevant-handcode"
+      @textarea.$el.attr('id', fieldId)
+      unless @$parent.children('label').length
+        @$parent.prepend($('<label/>', { class: 'logic-panel__label', for: fieldId }).text(t('Expression')))
       @button.render().attach_to @$parent
       @button.bind_event 'click', () => @context.use_mode_selector_helper()
       @textarea.val(@criteria)
