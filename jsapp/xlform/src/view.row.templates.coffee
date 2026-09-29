@@ -23,7 +23,7 @@ module.exports = do ->
   # OC-28571 AC4: an insertion point above the very first item in a list or
   # group. Prepended (by view.surveyApp.coffee's ensureLeadingSpacer) as the
   # first child of whichever row is currently first in its collection, so it
-  # shares the existing `.survey__row:hover > .survey__row__spacer` reveal
+  # shares the existing `.survey__row__spacer:hover` gap reveal
   # rule and the `.js-expand-row-selector` click delegation for free. The
   # `--leading` marker is what expandRowSelector uses to insert the new row
   # before this one instead of after it.

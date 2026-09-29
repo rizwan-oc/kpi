@@ -36,15 +36,37 @@
     opacity: 0;
     pointer-events: none;
   }
+  // OC-28865: no reveal while focus is within the row (typing in a field),
+  // only on hovering the gap (below) or focusing the control itself.
+}
 
-  // Reveals (grey) for as long as the mouse is anywhere over the row above
-  // it — its card, its inputs, its open settings panel — or while focus is
-  // within that row. Keyed to the whole row rather than just the gap
-  // itself, matching the old small plus icon's behavior.
-  &:hover,
-  &:focus-within {
-    > .survey__row__spacer > .btn--addrow,
-    > .survey__row__spacer > .survey__row__spacer-rule {
+// OC-28865: an invisible hover zone as tall as .btn--addrow, centered on
+// the seam, so the control shows only while the mouse is in the gap
+// between items, not anywhere over the row. Hidden while the namer/picker
+// is open, or it would sit over the picker.
+.survey__row > .survey__row__spacer {
+  &::before {
+    content: '';
+    // .clearfix sets display: table, which shrinks the zone to 0 width
+    display: block;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -2px;
+    height: 34px;
+    transform: translateY(-50%);
+    // above the neighbouring cards, which would otherwise take the hover;
+    // still below .btn--addrow, which comes later in DOM order.
+    z-index: 1;
+  }
+
+  &:has(> .line.expanded)::before {
+    display: none;
+  }
+
+  &:hover {
+    > .btn--addrow,
+    > .survey__row__spacer-rule {
       opacity: 1;
       pointer-events: auto;
     }
