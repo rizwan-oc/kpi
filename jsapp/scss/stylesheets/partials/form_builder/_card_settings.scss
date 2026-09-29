@@ -668,10 +668,11 @@
 
 // P1.20 AC6: every logic panel's heading row (logicPanelHeadHtml). The AI
 // Assistant button (generateButtonBridge.tsx) mounts after the heading and
-// sits at the row's right edge; a long heading wraps beside it.
+// sits at the row's right edge; a long heading wraps beside it. Baseline keeps
+// the button on the heading's first line, so it stays at the top right.
 .logic-panel__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
   // The row, not the heading, spaces the content below it, so the taller
