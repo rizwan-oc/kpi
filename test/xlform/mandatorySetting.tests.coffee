@@ -413,6 +413,43 @@ do ->
         expect(observedDuringWrite).toBe(true)
         expect(ctx._isLiveTypingWrite).toBe(false)
 
+      # Copilot review (PR #348): a synchronous 'change' listener throwing
+      # mid-write must not leave _isLiveTypingWrite stuck true, or a later,
+      # unrelated external write of a sentinel value would be misread as
+      # textbox input and never decode back to Always/Never.
+      it 'onCustomTextKeyup resets _isLiveTypingWrite even if the model write throws', ->
+        ctx =
+          isConditionalSelected: true
+          _ac3ModalPending: false
+          _isLiveTypingWrite: false
+          $panelEl: $('<div><input class="mandatory-setting-custom-text"></div>')
+          model:
+            set: -> throw new Error('boom')
+          showOrHideCondition: jest.fn()
+          setNewValue: MandatorySettingView.prototype.setNewValue
+        expect(->
+          MandatorySettingView.prototype.onCustomTextKeyup.call ctx,
+            key: 'e'
+            currentTarget: {value: 'true'}
+        ).toThrow('boom')
+        expect(ctx._isLiveTypingWrite).toBe(false)
+
+      it 'onCustomTextBlur resets _isLiveTypingWrite even if the model write throws', ->
+        ctx =
+          isConditionalSelected: true
+          _ac3ModalPending: false
+          _isLiveTypingWrite: false
+          model:
+            set: -> throw new Error('boom')
+            _parent: {}
+          showOrHideCondition: jest.fn()
+          setNewValue: MandatorySettingView.prototype.setNewValue
+        expect(->
+          MandatorySettingView.prototype.onCustomTextBlur.call ctx,
+            currentTarget: {value: 'true'}
+        ).toThrow('boom')
+        expect(ctx._isLiveTypingWrite).toBe(false)
+
     # ------------------------------------------------------------------
     # _updateRequiredLogicTabError has the same unguarded sentinel-string
     # pattern as render() did, and it IS reachable on every keystroke via

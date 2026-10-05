@@ -213,9 +213,14 @@ module.exports = do ->
           # doesn't mistake a value passing through a sentinel word mid-type
           # for a completed legacy-boolean value. model.set is synchronous,
           # so render() runs and returns before this flag is cleared below.
+          # finally: a synchronous 'change' listener throwing must not leave
+          # this stuck true, or a later external write would be misread as
+          # textbox input (Copilot review, PR #348).
           @_isLiveTypingWrite = true
-          @setNewValue(val)
-          @_isLiveTypingWrite = false
+          try
+            @setNewValue(val)
+          finally
+            @_isLiveTypingWrite = false
           @$panelEl?.find('.mandatory-setting-custom-text').focus()
           @showOrHideCondition()
       return
@@ -231,10 +236,12 @@ module.exports = do ->
       else
         # OC-28876: same input-originated marker as onCustomTextKeyup - the
         # value on blur is still whatever the user left in this view's own
-        # textbox, not an external write.
+        # textbox, not an external write. finally: see onCustomTextKeyup.
         @_isLiveTypingWrite = true
-        @setNewValue(val)
-        @_isLiveTypingWrite = false
+        try
+          @setNewValue(val)
+        finally
+          @_isLiveTypingWrite = false
         @showOrHideCondition()
         # P1.11 AC1: on blur only, after the model write above.
         runSyntaxCheck(@model._parent, 'required', evt.currentTarget)
