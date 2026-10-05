@@ -268,8 +268,12 @@ do ->
 
     # Builds a render()-ready ctx. `isConditionalSelected` seeds the PREVIOUS
     # render's state (render() reads this as prevIsConditional on its first
-    # line, before recomputing it for the current reqVal).
-    buildRenderCtx = (modelValue, {isConditionalSelected, panelValue} = {}) ->
+    # line, before recomputing it for the current reqVal). `isLiveTypingWrite`
+    # mirrors @_isLiveTypingWrite - true only when this render is standing in
+    # for the one onCustomTextKeyup/onCustomTextBlur triggers via their own
+    # setNewValue call; false (the default) represents any other model
+    # change, e.g. an external write from AI Apply (OC-28876).
+    buildRenderCtx = (modelValue, {isConditionalSelected, panelValue, isLiveTypingWrite} = {}) ->
       model =
         getValue: -> modelValue
         changed: null
@@ -281,6 +285,7 @@ do ->
       ctx =
         isConditionalSelected: isConditionalSelected or false
         _selectorVal: ''
+        _isLiveTypingWrite: isLiveTypingWrite or false
         hideConditional: false
         rowView: undefined
         _hasRenderedOnce: true
@@ -300,17 +305,17 @@ do ->
 
     describe 'while already Conditional (user is mid-typing an expression)', ->
       it 'does not flip Conditional to Always when the live value transiently equals "true"', ->
-        {ctx} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'tru')
+        {ctx} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'tru', isLiveTypingWrite: true)
         MandatorySettingView.prototype.render.call ctx
         expect(ctx.isConditionalSelected).toBe(true)
 
       it 'does not flip Conditional to Never when the live value transiently equals "false"', ->
-        {ctx} = buildRenderCtx('false', isConditionalSelected: true, panelValue: 'fals')
+        {ctx} = buildRenderCtx('false', isConditionalSelected: true, panelValue: 'fals', isLiveTypingWrite: true)
         MandatorySettingView.prototype.render.call ctx
         expect(ctx.isConditionalSelected).toBe(true)
 
       it 'does not flip Conditional to Always when the live value transiently equals "yes"', ->
-        {ctx} = buildRenderCtx('yes', isConditionalSelected: true, panelValue: 'ye')
+        {ctx} = buildRenderCtx('yes', isConditionalSelected: true, panelValue: 'ye', isLiveTypingWrite: true)
         MandatorySettingView.prototype.render.call ctx
         expect(ctx.isConditionalSelected).toBe(true)
 
@@ -321,9 +326,36 @@ do ->
       # field to '' once it's already Conditional, not keystroke-level
       # preservation of a stale DOM value.
       it 'syncs the panel input to the current value instead of blanking it to \'\'', ->
-        {ctx, $panelEl} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'tru')
+        {ctx, $panelEl} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'tru', isLiveTypingWrite: true)
         MandatorySettingView.prototype.render.call ctx
         expect($panelEl.find('.mandatory-setting-custom-text').val()).toBe('true')
+
+    # Copilot review (PR #348): render() fires on every model 'change', not
+    # just ones from this view's own keyup/blur handlers - e.g. AI Apply
+    # (applyExpression.ts) writes an already-Conditional row's model value
+    # directly. A write like that landing on exactly 'true'/'false'/'yes'
+    # is a deliberate, complete value (not mid-keystroke) and must still
+    # decode as a legacy boolean, even though the row was already Conditional.
+    describe 'while already Conditional, but the value came from an external write (not live typing)', ->
+      it 'still flips Conditional to Always when an external write sets exactly "true"', ->
+        {ctx} = buildRenderCtx('true', isConditionalSelected: true)
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(false)
+
+      it 'still flips Conditional to Never when an external write sets exactly "false"', ->
+        {ctx} = buildRenderCtx('false', isConditionalSelected: true)
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(false)
+
+      it 'still flips Conditional to Always when an external write sets exactly "yes"', ->
+        {ctx} = buildRenderCtx('yes', isConditionalSelected: true)
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(false)
+
+      it 'clears the panel input when an external write decodes to Always/Never', ->
+        {ctx, $panelEl} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'true')
+        MandatorySettingView.prototype.render.call ctx
+        expect($panelEl.find('.mandatory-setting-custom-text').val()).toBe('')
 
     describe 'on initial load (not already Conditional) — legacy boolean detection still works', ->
       it 'still recognizes a legacy boolean "true" value as Always', ->
@@ -340,6 +372,46 @@ do ->
         {ctx} = buildRenderCtx('false', isConditionalSelected: false)
         MandatorySettingView.prototype.render.call ctx
         expect(ctx.isConditionalSelected).toBe(false)
+
+    # ------------------------------------------------------------------
+    # Covers the mechanism itself (not just render()'s use of it): the flag
+    # must be true only for the duration of this view's own model.set call,
+    # and false again once onCustomTextKeyup/onCustomTextBlur return - so a
+    # later, unrelated model change (e.g. AI Apply) is never mistaken for a
+    # live-typing write (Copilot review, PR #348).
+    describe 'onCustomTextKeyup / onCustomTextBlur mark their own write as input-originated', ->
+      it 'onCustomTextKeyup sets _isLiveTypingWrite only while writing to the model', ->
+        observedDuringWrite = null
+        ctx =
+          isConditionalSelected: true
+          _ac3ModalPending: false
+          _isLiveTypingWrite: false
+          $panelEl: $('<div><input class="mandatory-setting-custom-text"></div>')
+          model:
+            set: (key, val) -> observedDuringWrite = ctx._isLiveTypingWrite
+          showOrHideCondition: jest.fn()
+          setNewValue: MandatorySettingView.prototype.setNewValue
+        MandatorySettingView.prototype.onCustomTextKeyup.call ctx,
+          key: 'e'
+          currentTarget: {value: 'true'}
+        expect(observedDuringWrite).toBe(true)
+        expect(ctx._isLiveTypingWrite).toBe(false)
+
+      it 'onCustomTextBlur sets _isLiveTypingWrite only while writing to the model', ->
+        observedDuringWrite = null
+        ctx =
+          isConditionalSelected: true
+          _ac3ModalPending: false
+          _isLiveTypingWrite: false
+          model:
+            set: (key, val) -> observedDuringWrite = ctx._isLiveTypingWrite
+            _parent: {}
+          showOrHideCondition: jest.fn()
+          setNewValue: MandatorySettingView.prototype.setNewValue
+        MandatorySettingView.prototype.onCustomTextBlur.call ctx,
+          currentTarget: {value: 'true'}
+        expect(observedDuringWrite).toBe(true)
+        expect(ctx._isLiveTypingWrite).toBe(false)
 
     # ------------------------------------------------------------------
     # _updateRequiredLogicTabError has the same unguarded sentinel-string

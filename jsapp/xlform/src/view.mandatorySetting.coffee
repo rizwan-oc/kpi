@@ -21,6 +21,7 @@ module.exports = do ->
       @_selectorVal = ''
       @_ac3ModalPending = false
       @_hasRenderedOnce = false
+      @_isLiveTypingWrite = false
       if @model
         @model.on('change', @render, @)
       return
@@ -31,14 +32,18 @@ module.exports = do ->
       # '' excluded: ambiguous (Never vs Conditional-no-expression)
       # onRadioChange owns @isConditionalSelected for '' case
       # OC-28876: only treat an exact 'yes'/'true'/'false' value as a legacy
-      # boolean when we weren't already Conditional going into this render.
-      # Without the `not prevIsConditional` guard this also fires on every
-      # keystroke of onCustomTextKeyup (each one re-triggers render() via the
-      # model 'change' listener), so a value that's merely passing through
-      # one of these exact strings mid-type (e.g. typing "true(...)") would
-      # wrongly flip the selector away from Conditional.
+      # boolean when this render wasn't triggered by our own keyup/blur write
+      # of the Conditional textbox. render() fires on every model 'change',
+      # not just ones from this view's own input handlers (e.g. AI Apply
+      # writes the model directly - see applyExpression.ts), so
+      # prevIsConditional alone can't tell "typed through this sentinel
+      # mid-expression" apart from "a complete external write that happens
+      # to equal one of these words" - the latter should still decode as a
+      # legacy boolean even when the row was already Conditional.
+      # @_isLiveTypingWrite is set only around onCustomTextKeyup and
+      # onCustomTextBlur's own setNewValue calls.
       isLegacyBool = reqVal is 'yes' or reqVal is 'true' or reqVal is 'false'
-      if not prevIsConditional and isLegacyBool
+      if not @_isLiveTypingWrite and isLegacyBool
         @isConditionalSelected = false
       else if @hideConditional
         # Conditional option is hidden for this question type — force to Never
@@ -204,7 +209,13 @@ module.exports = do ->
           if val.trim() isnt ''
             @_showAc3ModalForInput()
         else
+          # OC-28876: mark this model write as input-originated so render()
+          # doesn't mistake a value passing through a sentinel word mid-type
+          # for a completed legacy-boolean value. model.set is synchronous,
+          # so render() runs and returns before this flag is cleared below.
+          @_isLiveTypingWrite = true
           @setNewValue(val)
+          @_isLiveTypingWrite = false
           @$panelEl?.find('.mandatory-setting-custom-text').focus()
           @showOrHideCondition()
       return
@@ -218,7 +229,12 @@ module.exports = do ->
         if val.trim() isnt ''
           @_showAc3ModalForInput()
       else
+        # OC-28876: same input-originated marker as onCustomTextKeyup - the
+        # value on blur is still whatever the user left in this view's own
+        # textbox, not an external write.
+        @_isLiveTypingWrite = true
         @setNewValue(val)
+        @_isLiveTypingWrite = false
         @showOrHideCondition()
         # P1.11 AC1: on blur only, after the model write above.
         runSyntaxCheck(@model._parent, 'required', evt.currentTarget)
