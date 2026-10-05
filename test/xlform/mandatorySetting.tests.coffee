@@ -229,3 +229,209 @@ do ->
         it 'destroys the alertify dialog', ->
           capturedSetOpts.oncancel()
           expect(mockDestroy.mock.calls.length).toBe(1)
+
+  # ---------------------------------------------------------------------------
+  # MandatorySettingView.render — live-typing sentinel guard (OC-28876)
+  #
+  # render() runs on every model 'change' event, including the one fired by
+  # each keystroke while already Conditional (onCustomTextKeyup -> setNewValue
+  # -> model.set). Typing a value that transiently equals exactly 'true',
+  # 'false', or 'yes' must NOT flip the selector away from Conditional or
+  # clear the in-progress text — that detection is only valid when the view
+  # was not already Conditional going into this render (i.e. on load, or an
+  # external change while Always/Never was selected).
+  # ---------------------------------------------------------------------------
+
+  describe 'MandatorySettingView.render — live-typing sentinel guard (OC-28876)', ->
+
+    MandatorySettingView = null
+
+    beforeAll ->
+      mockDialogInstance =
+        set: -> @
+        show: -> @
+        destroy: ->
+
+      jest.resetModules()
+      jest.doMock 'alertifyjs', -> dialog: jest.fn(-> mockDialogInstance)
+      jest.doMock '#/openclinica/generateButtonBridge', ->
+        mountGenerateButton: jest.fn()
+        unmountAll: jest.fn()
+      jest.doMock '#/openclinica/syntaxCheckBridge', ->
+        runSyntaxCheck: jest.fn()
+        forgetSyntaxVerdictFor: jest.fn()
+
+      {MandatorySettingView} = require('../../jsapp/xlform/src/view.mandatorySetting')
+
+    afterAll ->
+      jest.resetModules()
+
+    # Builds a render()-ready ctx. `isConditionalSelected` seeds the PREVIOUS
+    # render's state (render() reads this as prevIsConditional on its first
+    # line, before recomputing it for the current reqVal).
+    buildRenderCtx = (modelValue, {isConditionalSelected, panelValue} = {}) ->
+      model =
+        getValue: -> modelValue
+        changed: null
+        cid: 'c-render'
+
+      $panelEl = $('<div><input class="mandatory-setting-custom-text"></div>')
+      $panelEl.find('.mandatory-setting-custom-text').val(panelValue or '')
+
+      ctx =
+        isConditionalSelected: isConditionalSelected or false
+        _selectorVal: ''
+        hideConditional: false
+        rowView: undefined
+        _hasRenderedOnce: true
+        _ac3ModalPending: false
+        _updateRequiredLogicTabVisibility: jest.fn()
+        _updateStatusBanner: jest.fn()
+        $el: $('<div>')
+        $panelEl: $panelEl
+        model: model
+        # render() calls @getChangedValue() directly (a prototype method on
+        # the real view). ctx here is a plain object, not a MandatorySettingView
+        # instance, so it needs its own copy. Mirrors the real implementation
+        # for this fixture, where model.changed is always null.
+        getChangedValue: -> String(model.getValue())
+
+      {ctx, model, $panelEl}
+
+    describe 'while already Conditional (user is mid-typing an expression)', ->
+      it 'does not flip Conditional to Always when the live value transiently equals "true"', ->
+        {ctx} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'tru')
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(true)
+
+      it 'does not flip Conditional to Never when the live value transiently equals "false"', ->
+        {ctx} = buildRenderCtx('false', isConditionalSelected: true, panelValue: 'fals')
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(true)
+
+      it 'does not flip Conditional to Always when the live value transiently equals "yes"', ->
+        {ctx} = buildRenderCtx('yes', isConditionalSelected: true, panelValue: 'ye')
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(true)
+
+      # NOTE: in real usage the panel input's DOM value and the model value
+      # always match by the time render() runs (onCustomTextKeyup -> setNewValue
+      # -> model.set -> synchronous render()), so panelValue here is only the
+      # pre-render DOM state; this test verifies render() doesn't blank the
+      # field to '' once it's already Conditional, not keystroke-level
+      # preservation of a stale DOM value.
+      it 'syncs the panel input to the current value instead of blanking it to \'\'', ->
+        {ctx, $panelEl} = buildRenderCtx('true', isConditionalSelected: true, panelValue: 'tru')
+        MandatorySettingView.prototype.render.call ctx
+        expect($panelEl.find('.mandatory-setting-custom-text').val()).toBe('true')
+
+    describe 'on initial load (not already Conditional) — legacy boolean detection still works', ->
+      it 'still recognizes a legacy boolean "true" value as Always', ->
+        {ctx} = buildRenderCtx('true', isConditionalSelected: false)
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(false)
+
+      it 'still recognizes a legacy boolean "yes" value as Always', ->
+        {ctx} = buildRenderCtx('yes', isConditionalSelected: false)
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(false)
+
+      it 'still recognizes a legacy boolean "false" value as Never', ->
+        {ctx} = buildRenderCtx('false', isConditionalSelected: false)
+        MandatorySettingView.prototype.render.call ctx
+        expect(ctx.isConditionalSelected).toBe(false)
+
+    # ------------------------------------------------------------------
+    # _updateRequiredLogicTabError has the same unguarded sentinel-string
+    # pattern as render() did, and it IS reachable on every keystroke via
+    # onCustomTextKeyup -> setNewValue -> showOrHideCondition ->
+    # _updateRequiredLogicTabError, all while @isConditionalSelected is
+    # already true. Once past the "not Conditional" early return, the value
+    # being checked is always the live expression text, never a
+    # selector-state value — so re-checking it against 'yes'/'true'/'false'
+    # only causes the Required Logic tab's error badge to flash on for the
+    # one keystroke where in-progress text transiently equals one of those
+    # exact words.
+    describe '_updateRequiredLogicTabError — live-typing sentinel guard', ->
+      buildErrorCtx = (value, {isConditionalSelected} = {}) ->
+        $icon = $('<span class="js-required-logic-error"></span>')
+        $wrap = $('<div></div>').append($icon)
+        ctx =
+          rowView: cardSettingsWrap: $wrap
+          isConditionalSelected: isConditionalSelected
+          getChangedValue: -> value
+        {ctx, $icon}
+
+      it 'does not show the error badge when the live expression transiently equals "true"', ->
+        {ctx, $icon} = buildErrorCtx('true', isConditionalSelected: true)
+        MandatorySettingView.prototype._updateRequiredLogicTabError.call ctx
+        expect($icon.css('display')).toBe('none')
+
+      it 'does not show the error badge when the live expression transiently equals "false"', ->
+        {ctx, $icon} = buildErrorCtx('false', isConditionalSelected: true)
+        MandatorySettingView.prototype._updateRequiredLogicTabError.call ctx
+        expect($icon.css('display')).toBe('none')
+
+      it 'does not show the error badge when the live expression transiently equals "yes"', ->
+        {ctx, $icon} = buildErrorCtx('yes', isConditionalSelected: true)
+        MandatorySettingView.prototype._updateRequiredLogicTabError.call ctx
+        expect($icon.css('display')).toBe('none')
+
+      it 'still shows the error badge when Conditional and the expression is genuinely empty', ->
+        {ctx, $icon} = buildErrorCtx('', isConditionalSelected: true)
+        MandatorySettingView.prototype._updateRequiredLogicTabError.call ctx
+        expect($icon.css('display')).not.toBe('none')
+
+      it 'still hides the error badge when not Conditional (Always/Never), regardless of value', ->
+        {ctx, $icon} = buildErrorCtx('true', isConditionalSelected: false)
+        MandatorySettingView.prototype._updateRequiredLogicTabError.call ctx
+        expect($icon.css('display')).toBe('none')
+
+    # ------------------------------------------------------------------
+    # insertInDOM has the same unguarded sentinel-string pattern as render()
+    # and _updateRequiredLogicTabError did, but it is NOT reachable during
+    # live typing — it runs once at mount time, right after render() already
+    # ran in the same synchronous call chain (view.row.coffee:
+    # .render().insertInDOM(@)), so @isConditionalSelected is already
+    # correctly computed for the current value by the time this runs. These
+    # tests pin its CURRENT behavior before the refactor in OC-28876.
+    describe 'insertInDOM — panel input seeded from an already-computed Conditional state', ->
+      it 'leaves the panel input blank when the loaded value is a legacy boolean (Always)', ->
+        $panelEl = $('<div><input class="mandatory-setting-custom-text"></div>')
+        ctx =
+          isConditionalSelected: false
+          $panelEl: $panelEl
+          $el: $('<div>')
+          model:
+            getValue: -> 'true'
+            changed: null
+          getChangedValue: -> 'true'
+          rowView:
+            defaultRowDetailParent: $('<div>')
+            cardSettingsWrap: $('<div><div class="js-card-settings-required-logic"></div></div>')
+          hideConditional: false
+          _updateRequiredLogicTabVisibility: jest.fn()
+          _updateStatusBanner: jest.fn()
+          _bindPanelEvents: jest.fn()
+        MandatorySettingView.prototype.insertInDOM.call ctx, ctx.rowView
+        expect(ctx.$panelEl.find('.mandatory-setting-custom-text').val()).toBe('')
+
+      it 'seeds the panel input with the expression when already Conditional', ->
+        $panelEl = $('<div><input class="mandatory-setting-custom-text"></div>')
+        ctx =
+          isConditionalSelected: true
+          $panelEl: $panelEl
+          $el: $('<div>')
+          model:
+            getValue: -> '${age} > 18'
+            changed: null
+          getChangedValue: -> '${age} > 18'
+          rowView:
+            defaultRowDetailParent: $('<div>')
+            cardSettingsWrap: $('<div><div class="js-card-settings-required-logic"></div></div>')
+          hideConditional: false
+          _updateRequiredLogicTabVisibility: jest.fn()
+          _updateStatusBanner: jest.fn()
+          _bindPanelEvents: jest.fn()
+        MandatorySettingView.prototype.insertInDOM.call ctx, ctx.rowView
+        expect(ctx.$panelEl.find('.mandatory-setting-custom-text').val()).toBe('${age} > 18')

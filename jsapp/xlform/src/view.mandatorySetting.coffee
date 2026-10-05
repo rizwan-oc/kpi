@@ -30,7 +30,15 @@ module.exports = do ->
       reqVal = @getChangedValue()
       # '' excluded: ambiguous (Never vs Conditional-no-expression)
       # onRadioChange owns @isConditionalSelected for '' case
-      if reqVal is 'yes' or reqVal is 'true' or reqVal is 'false'
+      # OC-28876: only treat an exact 'yes'/'true'/'false' value as a legacy
+      # boolean when we weren't already Conditional going into this render.
+      # Without the `not prevIsConditional` guard this also fires on every
+      # keystroke of onCustomTextKeyup (each one re-triggers render() via the
+      # model 'change' listener), so a value that's merely passing through
+      # one of these exact strings mid-type (e.g. typing "true(...)") would
+      # wrongly flip the selector away from Conditional.
+      isLegacyBool = reqVal is 'yes' or reqVal is 'true' or reqVal is 'false'
+      if not prevIsConditional and isLegacyBool
         @isConditionalSelected = false
       else if @hideConditional
         # Conditional option is hidden for this question type — force to Never
@@ -55,7 +63,11 @@ module.exports = do ->
       @$el.html(template)
       if @$panelEl
         panelInput = @$panelEl.find('.mandatory-setting-custom-text')
-        if reqVal isnt 'yes' and reqVal isnt 'true' and reqVal isnt 'false' and reqVal isnt ''
+        # OC-28876: mirror @isConditionalSelected (computed above) rather than
+        # re-checking reqVal against the sentinel strings — that duplicate
+        # check cleared the textbox on every keystroke that transiently
+        # equalled 'true'/'false'/'yes' while the user was still typing.
+        if @isConditionalSelected
           panelInput.val(reqVal)
         else
           panelInput.val('')
@@ -80,9 +92,13 @@ module.exports = do ->
           { row: @model._parent, attribute: 'required' }
         )
       @_bindPanelEvents()
-      # Populate panel input with existing value if conditional
+      # Populate panel input with existing value if conditional. render() has
+      # already run by this point (.render().insertInDOM(@) in view.row.coffee)
+      # and computed @isConditionalSelected for the current value — reuse it
+      # instead of re-deriving it from reqVal (OC-28876: keeps this in sync
+      # with the same check in render()).
       reqVal = @getChangedValue()
-      if reqVal isnt 'yes' and reqVal isnt 'true' and reqVal isnt 'false' and reqVal isnt ''
+      if @isConditionalSelected
         @$panelEl.find('.mandatory-setting-custom-text').val(reqVal)
       @_updateRequiredLogicTabVisibility()
       @_updateStatusBanner()
@@ -248,7 +264,12 @@ module.exports = do ->
         return
       requiredVal = @getChangedValue()
       normalizedRequiredVal = String(requiredVal or '').trim()
-      hasExpression = normalizedRequiredVal isnt '' and normalizedRequiredVal isnt 'yes' and normalizedRequiredVal isnt 'true' and normalizedRequiredVal isnt 'false'
+      # OC-28876: the Always/Never sentinel strings are irrelevant here — we've
+      # already returned above when not Conditional, so requiredVal is always the
+      # live expression text. Re-checking it against 'yes'/'true'/'false' only
+      # caused the badge to flash on for the one keystroke where in-progress text
+      # (e.g. typing "true(...)") transiently equalled one of those exact words.
+      hasExpression = normalizedRequiredVal isnt ''
       $errorIcon = @rowView.cardSettingsWrap.find('.js-required-logic-error')
       $errorIcon.toggle(not hasExpression)
 
