@@ -143,6 +143,32 @@ do ->
         expect(mockForgetSyntaxVerdictFor.mock.calls.length).toBe(0)
 
     # ------------------------------------------------------------------
+    # OC-28875: an AI Apply from Always/Never re-renders before the AC3
+    # modal is confirmed, so the banner must keep the old state until onok.
+    describe 'OC-28875 status banner while the AI Apply modal is pending', ->
+      it 'keeps the old label until Set Conditional is confirmed', ->
+        capturedSetOpts = null
+        {ctx} = buildCtx('')
+        proto = MandatorySettingView.prototype
+        ctx.$panelEl.append('<div class="js-required-logic-status"></div>')
+        ctx.isConditionalSelected = false
+        ctx._selectorVal = 'yes'
+        ctx._hasRenderedOnce = true
+        ctx._ac3ModalPending = false
+        ctx.rowView = {}
+        ctx.$el = $('<div>')
+        ctx.getChangedValue = -> '${A} = 1'
+        ctx._updateRequiredLogicTabVisibility = jest.fn()
+        ctx._updateStatusBanner = proto._updateStatusBanner
+        ctx._showAc3Modal = proto._showAc3Modal
+        ctx._showAc3ModalForGenerate = proto._showAc3ModalForGenerate
+        proto.render.call ctx
+        banner = -> ctx.$panelEl.find('.js-required-logic-status').text()
+        expect(banner()).toBe('Currently: Always')
+        capturedSetOpts.onok()
+        expect(banner()).toBe('Currently: Conditional')
+
+    # ------------------------------------------------------------------
     describe 'when the expression is empty', ->
       it 'proceeds immediately without showing a dialog', ->
         capturedSetOpts = null

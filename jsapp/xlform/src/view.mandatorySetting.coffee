@@ -60,10 +60,10 @@ module.exports = do ->
         else
           panelInput.val('')
       @_updateRequiredLogicTabVisibility()
-      @_updateStatusBanner()
       # OC-28718 AC3: detect when Generate applied an expression while selector was Always/Never
       if @rowView and @_hasRenderedOnce and not prevIsConditional and @isConditionalSelected and not @_ac3ModalPending
         @_showAc3ModalForGenerate()
+      @_updateStatusBanner()
       @_hasRenderedOnce = true
       return @
 
@@ -254,7 +254,8 @@ module.exports = do ->
 
     _updateStatusBanner: ->
       return unless @$panelEl
-      if @isConditionalSelected
+      # OC-28875: keep the old Always/Never label while the AC3 modal is open
+      if @isConditionalSelected and not @_ac3ModalPending
         stateLabel = t('Conditional')
       else if @_selectorVal is 'yes' or @_selectorVal is 'true'
         stateLabel = t('Always')
