@@ -21,6 +21,7 @@ module.exports = do ->
       @_selectorVal = ''
       @_ac3ModalPending = false
       @_hasRenderedOnce = false
+      @_isLiveTypingWrite = false
       if @model
         @model.on('change', @render, @)
       return
@@ -30,7 +31,19 @@ module.exports = do ->
       reqVal = @getChangedValue()
       # '' excluded: ambiguous (Never vs Conditional-no-expression)
       # onRadioChange owns @isConditionalSelected for '' case
-      if reqVal is 'yes' or reqVal is 'true' or reqVal is 'false'
+      # OC-28876: only treat an exact 'yes'/'true'/'false' value as a legacy
+      # boolean when this render wasn't triggered by our own keyup/blur write
+      # of the Conditional textbox. render() fires on every model 'change',
+      # not just ones from this view's own input handlers (e.g. AI Apply
+      # writes the model directly - see applyExpression.ts), so
+      # prevIsConditional alone can't tell "typed through this sentinel
+      # mid-expression" apart from "a complete external write that happens
+      # to equal one of these words" - the latter should still decode as a
+      # legacy boolean even when the row was already Conditional.
+      # @_isLiveTypingWrite is set only around onCustomTextKeyup and
+      # onCustomTextBlur's own setNewValue calls.
+      isLegacyBool = reqVal is 'yes' or reqVal is 'true' or reqVal is 'false'
+      if not @_isLiveTypingWrite and isLegacyBool
         @isConditionalSelected = false
       else if @hideConditional
         # Conditional option is hidden for this question type — force to Never
@@ -55,7 +68,11 @@ module.exports = do ->
       @$el.html(template)
       if @$panelEl
         panelInput = @$panelEl.find('.mandatory-setting-custom-text')
-        if reqVal isnt 'yes' and reqVal isnt 'true' and reqVal isnt 'false' and reqVal isnt ''
+        # OC-28876: mirror @isConditionalSelected (computed above) rather than
+        # re-checking reqVal against the sentinel strings — that duplicate
+        # check cleared the textbox on every keystroke that transiently
+        # equalled 'true'/'false'/'yes' while the user was still typing.
+        if @isConditionalSelected
           panelInput.val(reqVal)
         else
           panelInput.val('')
@@ -80,9 +97,13 @@ module.exports = do ->
           { row: @model._parent, attribute: 'required' }
         )
       @_bindPanelEvents()
-      # Populate panel input with existing value if conditional
+      # Populate panel input with existing value if conditional. render() has
+      # already run by this point (.render().insertInDOM(@) in view.row.coffee)
+      # and computed @isConditionalSelected for the current value — reuse it
+      # instead of re-deriving it from reqVal (OC-28876: keeps this in sync
+      # with the same check in render()).
       reqVal = @getChangedValue()
-      if reqVal isnt 'yes' and reqVal isnt 'true' and reqVal isnt 'false' and reqVal isnt ''
+      if @isConditionalSelected
         @$panelEl.find('.mandatory-setting-custom-text').val(reqVal)
       @_updateRequiredLogicTabVisibility()
       @_updateStatusBanner()
@@ -188,7 +209,18 @@ module.exports = do ->
           if val.trim() isnt ''
             @_showAc3ModalForInput()
         else
-          @setNewValue(val)
+          # OC-28876: mark this model write as input-originated so render()
+          # doesn't mistake a value passing through a sentinel word mid-type
+          # for a completed legacy-boolean value. model.set is synchronous,
+          # so render() runs and returns before this flag is cleared below.
+          # finally: a synchronous 'change' listener throwing must not leave
+          # this stuck true, or a later external write would be misread as
+          # textbox input (Copilot review, PR #348).
+          @_isLiveTypingWrite = true
+          try
+            @setNewValue(val)
+          finally
+            @_isLiveTypingWrite = false
           @$panelEl?.find('.mandatory-setting-custom-text').focus()
           @showOrHideCondition()
       return
@@ -202,7 +234,14 @@ module.exports = do ->
         if val.trim() isnt ''
           @_showAc3ModalForInput()
       else
-        @setNewValue(val)
+        # OC-28876: same input-originated marker as onCustomTextKeyup - the
+        # value on blur is still whatever the user left in this view's own
+        # textbox, not an external write. finally: see onCustomTextKeyup.
+        @_isLiveTypingWrite = true
+        try
+          @setNewValue(val)
+        finally
+          @_isLiveTypingWrite = false
         @showOrHideCondition()
         # P1.11 AC1: on blur only, after the model write above.
         runSyntaxCheck(@model._parent, 'required', evt.currentTarget)
@@ -248,7 +287,12 @@ module.exports = do ->
         return
       requiredVal = @getChangedValue()
       normalizedRequiredVal = String(requiredVal or '').trim()
-      hasExpression = normalizedRequiredVal isnt '' and normalizedRequiredVal isnt 'yes' and normalizedRequiredVal isnt 'true' and normalizedRequiredVal isnt 'false'
+      # OC-28876: the Always/Never sentinel strings are irrelevant here — we've
+      # already returned above when not Conditional, so requiredVal is always the
+      # live expression text. Re-checking it against 'yes'/'true'/'false' only
+      # caused the badge to flash on for the one keystroke where in-progress text
+      # (e.g. typing "true(...)") transiently equalled one of those exact words.
+      hasExpression = normalizedRequiredVal isnt ''
       $errorIcon = @rowView.cardSettingsWrap.find('.js-required-logic-error')
       $errorIcon.toggle(not hasExpression)
 
